@@ -1,0 +1,4295 @@
+/* ----- Archivo PHP: admin_footer.php ----- */
+<?php
+// admin_footer.php
+echo "</body></html>";
+?>
+
+/* ----- Archivo PHP: admin_header.php ----- */
+<?php
+// Nombre este archivo como cualquier módulo que falle (raffles.php, settings.php, etc.)
+session_start();
+
+// Configuración para mostrar errores (eliminar en producción)
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+// Verificar autenticación
+require __DIR__ . '/auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+// Conexión a BD
+require __DIR__ . '/db_connection.php';
+
+// Obtener información del usuario actual
+$current_user = null; // Inicializamos la variable para evitar errores
+if (isset($_SESSION['user_id'])) {
+    $stmt = $pdo->prepare("SELECT * FROM security WHERE id = ?");
+    $stmt->execute([$_SESSION['user_id']]);
+    $current_user = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+?>
+
+<div class="admin-header">
+    <h2>GANA VENEZUELA</h2>
+    <div class="user-info">
+        <div class="username"><?php 
+            if ($current_user && isset($current_user['titleholder'])) {
+                echo htmlspecialchars($current_user['titleholder']);
+            } else {
+                echo 'Admin';
+            }
+        ?></div>
+        <a href="logout.php" class="logout-btn">Salir</a>
+    </div>
+</div>
+
+<div class="admin-nav">
+    <div class="nav-center">
+        <a href="overview.php">INICIO</a>
+        <a href="raffles.php">SORTEOS</a>
+        <a href="sales.php">VENTAS</a>
+        <a href="settings.php">CONFIGURACIÓN</a>
+        <?php if ($current_user && isset($current_user['grants']) && $current_user['grants'] === 'admin'): ?>
+            <a href="users.php">USUARIOS</a>
+        <?php endif; ?>
+    </div>
+</div>
+
+<style>
+    .admin-header {
+        background-color: #000f59;
+        color: white;
+        padding: 15px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 95%;
+        margin: 0 auto;
+    }
+    .user-info {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+    .username {
+        margin-bottom: 5px;
+        font-size: 14px;
+    }
+    .admin-nav {
+        background-color: #ff6f00;
+        padding: 10px;
+        width: 95%;
+        margin: 0 auto;
+        border-radius: 5px;
+    }
+    .nav-center {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+    .admin-nav a {
+        color: white;
+        text-decoration: none;
+        margin: 0 10px;
+        padding: 5px 0;
+        font-weight: bold;
+    }
+    .admin-nav a:hover {
+        color: #ffcc00;
+    }
+    .logout-btn {
+        background-color: #ff0000;
+        color: white;
+        padding: 5px 15px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-weight: bold;
+        transition: background-color 0.3s;
+    }
+    .logout-btn:hover {
+        background-color: #cc0000;
+    }
+    @media (max-width: 768px) {
+        .admin-nav a {
+            margin: 0 5px;
+            font-size: 14px;
+        }
+        .user-info {
+            text-align: right;
+        }
+    }
+</style>
+
+/* ----- Archivo PHP: auth_functions.php ----- */
+<?php
+if (!function_exists('is_logged_in')) {
+    function is_logged_in() {
+        return !empty($_SESSION['user_id']);
+    }
+}
+
+if (!function_exists('authenticate_user')) {
+    function authenticate_user($username, $password) {
+        require __DIR__ . '/db_connection.php';
+        try {
+            $stmt = $pdo->prepare("SELECT id, grants FROM security WHERE username = ? AND password = ? AND status = 'active' LIMIT 1");
+            $stmt->execute([$username, $password]);
+            $user = $stmt->fetch();
+            if ($user) {
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['user_grants'] = $user['grants'];
+                return true;
+            }
+            return false;
+        } catch (PDOException $e) {
+            error_log("Error de autenticación: " . $e->getMessage());
+            return false;
+        }
+    }
+}
+?>
+
+/* ----- Archivo PHP: db_connection.php ----- */
+<?php
+// db_connection.php
+$host = "localhost";
+$dbname = "ganavenezuela.com";
+$username = "root";
+$password = "Cable0414++";
+
+try {
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    error_log("Error de conexión: " . $e->getMessage());
+    die("Error de conexión a la base de datos");
+}
+?>
+
+/* ----- Archivo PHP: delete_raffle.php ----- */
+<?php
+session_start();
+
+// Incluir archivos necesarios
+require_once 'db_connection.php';
+
+// Definir funciones de autenticación si no están definidas
+if (!function_exists('is_logged_in')) {
+    function is_logged_in() {
+        return !empty($_SESSION['user_id']);
+    }
+}
+
+if (!function_exists('get_current_admin_user')) {
+    function get_current_admin_user() {
+        global $pdo;
+        if (empty($_SESSION['user_id'])) {
+            return null;
+        }
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM security WHERE id = ?");
+            $stmt->execute([$_SESSION['user_id']]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error al obtener usuario: " . $e->getMessage());
+            return null;
+        }
+    }
+}
+
+try {
+    // Verificar autenticación
+    if (!is_logged_in()) {
+        header('Location: login.php');
+        exit;
+    }
+
+    $current_user = get_current_admin_user();
+    if (!$current_user || $current_user['grants'] !== 'admin') {
+        throw new Exception("Permisos insuficientes", 403);
+    }
+
+    // Validar ID del sorteo
+    $id = intval($_GET['id'] ?? 0);
+    if ($id <= 0) {
+        throw new Exception("ID de sorteo inválido", 400);
+    }
+
+    // Verificar si existen ventas asociadas
+    $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM buy WHERE raffle = ?");
+    $stmt_check->execute([$id]);
+    $sales_count = $stmt_check->fetchColumn();
+    
+    if ($sales_count > 0) {
+        throw new Exception("No se puede eliminar el sorteo porque tiene ventas asociadas", 400);
+    }
+
+    // Eliminar sorteo
+    $stmt = $pdo->prepare("DELETE FROM raffles WHERE id = ?");
+    $stmt->execute([$id]);
+    
+    if ($stmt->rowCount() === 0) {
+        throw new Exception("Sorteo no encontrado", 404);
+    }
+
+    $_SESSION['success_message'] = "Sorteo eliminado correctamente";
+    header('Location: raffles.php');
+    exit;
+
+} catch (Exception $e) {
+    http_response_code($e->getCode() ?: 500);
+    $_SESSION['error_message'] = "Error: " . $e->getMessage();
+    header('Location: raffles.php');
+    exit;
+}
+?>
+
+/* ----- Archivo PHP: get_features.php ----- */
+<?php
+// Habilitar reporte de errores para desarrollo
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+session_start();
+require_once 'auth_functions.php';
+require_once 'db_connection.php';
+
+header('Content-Type: application/json');
+
+try {
+    // Verificar autenticación
+    if (!is_logged_in()) {
+        throw new Exception('Acceso no autorizado', 401);
+    }
+
+    // Consultar datos de la tabla features
+    $stmt = $pdo->query("
+        SELECT 
+            rate 
+        FROM features 
+        LIMIT 1
+    ");
+
+    if (!$stmt) {
+        throw new Exception('Error al obtener datos de la tabla features: ' . implode(' ', $pdo->errorInfo()), 500);
+    }
+
+    $features = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$features) {
+        throw new Exception('No se encontraron datos en la tabla features', 404);
+    }
+
+    // Construir respuesta
+    $response = [
+        'success' => true,
+        'data' => [
+            'features' => [
+                'rate' => $features['rate']
+            ]
+        ]
+    ];
+
+    echo json_encode($response, JSON_PRETTY_PRINT);
+
+} catch (Exception $e) {
+    http_response_code($e->getCode() ?: 500);
+    echo json_encode([
+        'success' => false,
+        'error' => $e->getMessage(),
+        'code' => $e->getCode()
+    ], JSON_PRETTY_PRINT);
+    exit;
+}
+?>
+
+/* ----- Archivo PHP: get_raffle.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+require_once 'db_connection.php';
+
+header('Content-Type: application/json');
+
+if (!is_logged_in()) {
+    echo json_encode(['success' => false, 'error' => 'No autorizado']);
+    exit;
+}
+
+$id = intval($_GET['id'] ?? 0);
+if ($id <= 0) {
+    echo json_encode(['success' => false, 'error' => 'ID inválido']);
+    exit;
+}
+
+try {
+    $stmt = $pdo->prepare("SELECT * FROM raffles WHERE id = ?");
+    $stmt->execute([$id]);
+    $raffle = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$raffle) {
+        echo json_encode(['success' => false, 'error' => 'Sorteo no encontrado']);
+        exit;
+    }
+    
+    // Formatear fecha para input datetime-local
+    if (!empty($raffle['r_date'])) {
+        try {
+            $raffle['r_date'] = (new DateTime($raffle['r_date']))->format('Y-m-d\TH:i');
+        } catch (Exception $e) {
+            $raffle['r_date'] = '';
+        }
+    } else {
+        $raffle['r_date'] = '';
+    }
+    
+    echo json_encode(['success' => true, 'data' => $raffle]);
+    
+} catch (PDOException $e) {
+    error_log("Error en get_raffle.php: " . $e->getMessage());
+    echo json_encode(['success' => false, 'error' => 'Error en el servidor']);
+}
+?>
+
+/* ----- Archivo PHP: get_sale.php ----- */
+<?php
+// Habilitar reporte de errores para desarrollo
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+session_start();
+require_once 'auth_functions.php';
+require_once 'db_connection.php';
+
+header('Content-Type: application/json');
+
+try {
+    // Verificar autenticación
+    if (!is_logged_in()) {
+        throw new Exception('Acceso no autorizado', 401);
+    }
+
+    // Verificar que el ID existe y es válido
+    if (!isset($_GET['id'])) {
+        throw new Exception('Se requiere el parámetro ID', 400);
+    }
+
+    // Obtener y validar ID (como string para preservar ceros iniciales)
+    $buy_id = $_GET['id'];
+    if (!is_numeric($buy_id)) {
+        throw new Exception('ID de venta debe ser numérico', 400);
+    }
+
+    // CONSULTA 1: Obtener datos de la tabla buy
+    $stmt_buy = $pdo->prepare("
+        SELECT 
+            id,
+            date,
+            name,
+            cid,
+            phone,
+            number,
+            status,
+            capture,
+            raffle
+        FROM buy
+        WHERE id = ?
+    ");
+
+    if (!$stmt_buy->execute([$buy_id])) {
+        throw new Exception('Error al obtener datos de la venta: ' . implode(' ', $stmt_buy->errorInfo()), 500);
+    }
+
+    $sale = $stmt_buy->fetch(PDO::FETCH_ASSOC);
+
+    if (!$sale) {
+        throw new Exception('Venta no encontrada', 404);
+    }
+
+    // CONSULTA 2: Obtener datos de la rifa relacionada (solo si existe raffle_id)
+    $raffle_data = null;
+    if (!empty($sale['raffle'])) {
+        $stmt_raffle = $pdo->prepare("
+            SELECT 
+                id,
+                r_title,
+                r_price
+            FROM raffles
+            WHERE id = ?
+        ");
+
+        if (!$stmt_raffle->execute([$sale['raffle']])) {
+            throw new Exception('Error al obtener datos de la rifa: ' . implode(' ', $stmt_raffle->errorInfo()), 500);
+        }
+
+        $raffle_data = $stmt_raffle->fetch(PDO::FETCH_ASSOC);
+    }
+
+    // CONSULTA 3: Obtener tasa (rate) desde la tabla features
+    $stmt_rate = $pdo->query("SELECT rate FROM features LIMIT 1");
+    $rate = $stmt_rate->fetchColumn();
+
+    // Calcular monto
+    $numbers = explode(',', $sale['number']);
+    $number_count = count(array_filter(array_map('trim', $numbers)));
+    $r_price = $raffle_data['r_price'] ?? 0;
+    $amount = $r_price * $number_count * ($rate ?? 1);
+
+    // Construir respuesta
+    $response = [
+        'success' => true,
+        'data' => [
+            'buy' => [
+                'id' => $sale['id'],
+                'date' => $sale['date'],
+                'name' => $sale['name'],
+                'cid' => $sale['cid'],
+                'phone' => $sale['phone'],
+                'number' => $sale['number'],
+                'status' => $sale['status'],
+                'capture' => $sale['capture'],
+                'raffle_id' => $sale['raffle']
+            ],
+            'raffle' => $raffle_data ? [
+                'id' => $raffle_data['id'],
+                'title' => $raffle_data['r_title'],
+                'price' => $raffle_data['r_price']
+            ] : null,
+            'amount' => $amount
+        ]
+    ];
+
+    echo json_encode($response, JSON_PRETTY_PRINT);
+
+} catch (Exception $e) {
+    http_response_code($e->getCode() ?: 500);
+    echo json_encode([
+        'success' => false,
+        'error' => $e->getMessage(),
+        'code' => $e->getCode()
+    ], JSON_PRETTY_PRINT);
+    exit;
+}
+?>
+
+/* ----- Archivo PHP: get_user.php ----- */
+<?php
+// Habilitar visualización de errores (desactivar en producción)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+
+// Iniciar sesión
+session_start();
+
+// Definir función si no existe (misma que en users.php)
+if (!function_exists('get_current_admin_user')) {
+    function get_current_admin_user() {
+        global $pdo;
+        
+        if (empty($_SESSION['user_id'])) {
+            return null;
+        }
+
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM security WHERE id = ?");
+            $stmt->execute([$_SESSION['user_id']]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error al obtener usuario: " . $e->getMessage());
+            return null;
+        }
+    }
+}
+
+// Verificar archivos requeridos
+$required_files = [
+    'auth_functions.php',
+    'db_connection.php'
+];
+
+foreach ($required_files as $file) {
+    if (!file_exists($file)) {
+        header('Content-Type: application/json');
+        http_response_code(500);
+        die(json_encode(['error' => "Archivo requerido '$file' no encontrado"]));
+    }
+}
+
+require_once 'auth_functions.php';
+require_once 'db_connection.php';
+
+header('Content-Type: application/json');
+
+try {
+    // Verificar autenticación
+    if (!is_logged_in()) {
+        throw new Exception('No autorizado', 401);
+    }
+
+    // Obtener usuario actual
+    $current_user = get_current_admin_user();
+    if (!$current_user || $current_user['grants'] !== 'admin') {
+        throw new Exception('Permisos insuficientes', 403);
+    }
+
+    // Validar ID
+    if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
+        throw new Exception('ID de usuario no proporcionado o inválido', 400);
+    }
+
+    $id = (int)$_GET['id'];
+    if ($id <= 0) {
+        throw new Exception('ID de usuario inválido', 400);
+    }
+
+    // Consulta segura
+    $stmt = $pdo->prepare("SELECT id, username, titleholder, grants, status FROM security WHERE id = ?");
+    if (!$stmt->execute([$id])) {
+        throw new Exception('Error al ejecutar la consulta', 500);
+    }
+
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$user) {
+        throw new Exception('Usuario no encontrado', 404);
+    }
+
+    // Respuesta exitosa
+    echo json_encode([
+        'success' => true,
+        'data' => $user
+    ]);
+
+} catch (Exception $e) {
+    // Asegurar que solo se envía JSON
+    http_response_code($e->getCode() ?: 500);
+    echo json_encode([
+        'error' => $e->getMessage(),
+        'code' => $e->getCode()
+    ]);
+    exit;
+}
+?>
+
+/* ----- Archivo PHP: index.php ----- */
+<?php
+session_start();
+
+require __DIR__ . '/db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'] ?? '';
+    $password = $_POST['password'] ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("SELECT id, grants, titleholder FROM security WHERE username = ? AND password = ? AND status = 'active' LIMIT 1");
+        $stmt->execute([$username, $password]);
+        
+        if ($user = $stmt->fetch()) {
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['user_grants'] = $user['grants'];
+            $_SESSION['user_titleholder'] = $user['titleholder'] ?? 'Admin';
+            header('Location: overview.php');
+            exit;
+        } else {
+            $error = "Usuario o contraseña incorrectos";
+        }
+    } catch (PDOException $e) {
+        $error = "Error de conexión: " . $e->getMessage();
+    }
+}
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Acceso Administración</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+	@font-face {
+    font-family: 'Forgotten';
+    src: url('fonts/forgotten.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Forgotten', Arial, sans-serif;
+            background-color: #000f59;
+            color: white;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .admin-container {
+            width: 90%;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .login-box {
+            background-color: white;
+            padding: 25px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.05);
+            width: 100%;
+        }
+        .login-box h1 {
+            text-align: center;
+            color: #000f59;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            font-size: 28px;
+        }
+        .login-box h2 {
+            text-align: center;
+            color: #000f59;
+            margin-bottom: 25px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #000f59;
+            font-size: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+            text-align: center;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #000f59;
+            border-radius: 4px;
+            font-size: 16px;
+            text-align: center;
+        }
+        button {
+            background-color: #ff6f00;
+            color: white;
+            border: none;
+            padding: 14px;
+            width: 100%;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #e65100;
+        }
+        .error-message {
+            color: #cd1313;
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+            padding: 12px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+            width: 100%;
+        }
+        @media (max-width: 768px) {
+            .admin-container {
+                width: 90%;
+                padding: 15px;
+                margin: 10px auto;
+            }
+            .login-box {
+                padding: 20px 15px;
+            }
+            .login-box h1 {
+                font-size: 24px;
+            }
+            .login-box h2 {
+                font-size: 18px;
+            }
+        }
+        @media (max-width: 480px) {
+            .admin-container {
+                width: 90%;
+                padding: 10px;
+            }
+            .form-group input {
+                padding: 10px;
+            }
+            button {
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="login-box">
+            <h1>GANA VENEZUELA</h1>
+            <h2>Sistema Comercial</h2>
+            <?php if (isset($error)): ?>
+                <div class="error-message"><?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+            <form method="post">
+                <div class="form-group">
+                    <label for="username">Usuario:</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Contraseña:</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit">Ingresar</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+/* ----- Archivo PHP: login.php ----- */
+<?php
+session_start();
+
+require __DIR__ . '/db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'] ?? '';
+    $password = $_POST['password'] ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("SELECT id, grants, titleholder FROM security WHERE username = ? AND password = ? AND status = 'active' LIMIT 1");
+        $stmt->execute([$username, $password]);
+        
+        if ($user = $stmt->fetch()) {
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['user_grants'] = $user['grants'];
+            $_SESSION['user_titleholder'] = $user['titleholder'] ?? 'Admin';
+            header('Location: overview.php');
+            exit;
+        } else {
+            $error = "Usuario o contraseña incorrectos";
+        }
+    } catch (PDOException $e) {
+        $error = "Error de conexión: " . $e->getMessage();
+    }
+}
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Acceso Administración</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+	@font-face {
+    font-family: 'Forgotten';
+    src: url('fonts/forgotten.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Forgotten', Arial, sans-serif;
+            background-color: #000f59;
+            color: white;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .admin-container {
+            width: 90%;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .login-box {
+            background-color: white;
+            padding: 25px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.05);
+            width: 100%;
+        }
+        .login-box h1 {
+            text-align: center;
+            color: #000f59;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            font-size: 28px;
+        }
+        .login-box h2 {
+            text-align: center;
+            color: #000f59;
+            margin-bottom: 25px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #000f59;
+            font-size: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+            text-align: center;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #000f59;
+            border-radius: 4px;
+            font-size: 16px;
+            text-align: center;
+        }
+        button {
+            background-color: #ff6f00;
+            color: white;
+            border: none;
+            padding: 14px;
+            width: 100%;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #e65100;
+        }
+        .error-message {
+            color: #cd1313;
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+            padding: 12px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+            width: 100%;
+        }
+        @media (max-width: 768px) {
+            .admin-container {
+                width: 90%;
+                padding: 15px;
+                margin: 10px auto;
+            }
+            .login-box {
+                padding: 20px 15px;
+            }
+            .login-box h1 {
+                font-size: 24px;
+            }
+            .login-box h2 {
+                font-size: 18px;
+            }
+        }
+        @media (max-width: 480px) {
+            .admin-container {
+                width: 90%;
+                padding: 10px;
+            }
+            .form-group input {
+                padding: 10px;
+            }
+            button {
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="login-box">
+            <h1>GANA VENEZUELA</h1>
+            <h2>Sistema Comercial</h2>
+            <?php if (isset($error)): ?>
+                <div class="error-message"><?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+            <form method="post">
+                <div class="form-group">
+                    <label for="username">Usuario:</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Contraseña:</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit">Ingresar</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+/* ----- Archivo PHP: logout.php ----- */
+<?php
+session_start();
+session_destroy();
+header('Location: login.php');
+exit;
+?>
+
+/* ----- Archivo PHP: overview.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+// Obtener estadísticas
+$raffles_count = $pdo->query("SELECT COUNT(*) FROM raffles")->fetchColumn();
+$active_raffles = $pdo->query("SELECT COUNT(*) FROM raffles WHERE status = 'active'")->fetchColumn();
+$total_sales = $pdo->query("SELECT COUNT(*) FROM buy")->fetchColumn();
+$pending_sales = $pdo->query("SELECT COUNT(*) FROM buy WHERE status = 'pending'")->fetchColumn();
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Admin Gana Venezuela</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .admin-header {
+            background-color: #000f59;
+            color: white;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .admin-nav {
+            background-color: #001a8c;
+            padding: 10px;
+        }
+        .admin-nav a {
+            color: white;
+            text-decoration: none;
+            margin-right: 15px;
+        }
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 20px;
+			width:95%;
+        }
+        .stat-card {
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+			
+        }
+        .stat-card h3 {
+            color: #000f59;
+            margin-bottom: 10px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff6f00;
+        }
+    </style>
+</head>
+<body>
+    <?php include 'admin_header.php'; ?>
+    
+    <div class="stats-container">
+        <div class="stat-card">
+            <h3>Sorteos Totales</h3>
+            <div class="stat-value"><?php echo $raffles_count; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Sorteos Activos</h3>
+            <div class="stat-value"><?php echo $active_raffles; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Ventas Totales</h3>
+            <div class="stat-value"><?php echo $total_sales; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Ventas Pendientes</h3>
+            <div class="stat-value"><?php echo $pending_sales; ?></div>
+        </div>
+    </div>
+</body>
+</html>
+
+/* ----- Archivo PHP: raffles.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+require_once 'db_connection.php';
+
+// Inicializar variables
+$success_message = '';
+$error_message = '';
+$search_results = [];
+$search_message = '';
+$raffles = [];
+
+// Procesar formulario de creación/edición
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id'])) {
+    $id = $_POST['id'] ?? 0;
+    $title = strtoupper($_POST['title']) ?? '';
+    $description = strtoupper($_POST['description']) ?? '';
+    $date = $_POST['date'] ?? '';
+    $price = $_POST['price'] ?? 0;
+    $begin = $_POST['begin'] ?? 0;
+    $final = $_POST['final'] ?? 0;
+    $status = $_POST['status'] ?? 'active';
+
+    // Procesar imagen
+    $image_name = '';
+    if (isset($_FILES['description_image']) && $_FILES['description_image']['error'] === UPLOAD_ERR_OK) {
+        $image = $_FILES['description_image'];
+        $extension = pathinfo($image['name'], PATHINFO_EXTENSION);
+        $image_name = uniqid() . '.' . $extension;
+        move_uploaded_file($image['tmp_name'], 'uploads/' . $image_name);
+    }
+
+    if ($id > 0) {
+        // Actualizar sorteo existente
+        if ($image_name) {
+            $stmt = $pdo->prepare("UPDATE raffles SET r_title = ?, r_description = ?, r_description_image = ?, r_date = ?, r_price = ?, begin = ?, final = ?, status = ? WHERE id = ?");
+            $stmt->execute([$title, $description, $image_name, $date, $price, $begin, $final, $status, $id]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE raffles SET r_title = ?, r_description = ?, r_date = ?, r_price = ?, begin = ?, final = ?, status = ? WHERE id = ?");
+            $stmt->execute([$title, $description, $date, $price, $begin, $final, $status, $id]);
+        }
+        $success_message = "Sorteo actualizado correctamente";
+    } else {
+        // Crear nuevo sorteo
+		$stmt = $pdo->prepare("
+			INSERT INTO raffles 
+			(r_title, r_description, r_description_image, r_date, r_price, begin, final, status, agent, sold) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		");
+		$stmt->execute([$title, $description, $image_name, $date, $price, $begin, $final, $status, $_SESSION['user_titleholder'] ?? 'Admin', 0]);
+		$success_message = "Sorteo creado correctamente";
+    }
+    $_SESSION['success_message'] = $success_message;
+    header('Location: raffles.php');
+    exit;
+}
+
+// Procesar ganadores
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_winners'])) {
+    $raffle_id = $_POST['raffle_id'];
+    $winners = $_POST['winners'] ?? [];
+    
+    // Validar que haya al menos un número ganador
+    if (empty($winners)) {
+        $_SESSION['error_message'] = "Debe ingresar al menos un número ganador";
+        header('Location: raffles.php');
+        exit;
+    }
+    
+    // Filtrar y formatear números ganadores
+    $valid_winners = [];
+    foreach ($winners as $winner) {
+        $clean_winner = preg_replace('/[^0-9]/', '', $winner);
+        if (!empty($clean_winner)) {
+            $valid_winners[] = str_pad($clean_winner, 4, '0', STR_PAD_LEFT);
+        }
+    }
+    
+    if (empty($valid_winners)) {
+        $_SESSION['error_message'] = "Los números ganadores no son válidos";
+        header('Location: raffles.php');
+        exit;
+    }
+    
+    $winners_str = implode(',', $valid_winners);
+    
+    // Actualizar sorteo con ganadores y cambiar estado
+    $stmt = $pdo->prepare("UPDATE raffles SET winners = ?, status = 'completed' WHERE id = ?");
+    $stmt->execute([$winners_str, $raffle_id]);
+    
+    // Obtener información del sorteo
+    $stmt = $pdo->prepare("SELECT * FROM raffles WHERE id = ?");
+    $stmt->execute([$raffle_id]);
+    $raffle = $stmt->fetch();
+    
+    // Obtener configuración de WhatsApp
+    $stmt = $pdo->query("SELECT * FROM features LIMIT 1");
+    $features = $stmt->fetch();
+    $session_whatsapp = $features['session_whatsapp'] ?? '';
+    $admin_phone = $features['session_phone'] ?? '';
+    
+    // Actualizar todos los registros pendientes en buy a cancelled
+    $stmt = $pdo->prepare("UPDATE buy SET status = 'cancelled' WHERE raffle = ? AND status = 'pending'");
+    $stmt->execute([$raffle_id]);
+    
+    // Plantilla de mensaje para ganadores
+    $winner_message_template = "
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+*GANADOR*
+
+Sr(a). *{name}*, ha sido el ganador en el sorteo {raffle_id}:
+
+-------
+Sorteo: *{raffle_title}*
+Fecha: *{raffle_date}*
+Número Ganador: *{winning_number}*
+-------
+
+Le contactaremos para iniciar el proceso del pago de su premio
+
+*FELICIDADES!*
+    ";
+    
+    // Plantilla de mensaje para administrador
+    $admin_message_template = "
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+*SORTEO {raffle_id} FINALIZADO*
+
+----------------
+*Sorteo:* {raffle_title}
+*Fecha:* {raffle_date}
+*Números ganadores:* {winning_numbers}
+----------------
+
+*LISTA DE GANADORES*
+{winner_details}
+    ";
+    
+    $all_winners_info = [];
+    $winner_details = "";
+    
+    foreach ($valid_winners as $winning_number) {
+        // Buscar compradores con este número Y estado completed
+        $stmt = $pdo->prepare("SELECT * FROM buy WHERE raffle = ? AND number LIKE ? AND status = 'completed'");
+        $stmt->execute([$raffle_id, "%$winning_number%"]);
+        $winners_data = $stmt->fetchAll();
+        
+        foreach ($winners_data as $winner) {
+            // Verificar si este número específico está en la lista del comprador
+            $player_numbers = explode(',', $winner['number']);
+            foreach ($player_numbers as $player_num) {
+                if (str_pad($player_num, 4, '0', STR_PAD_LEFT) === $winning_number) {
+                    // Almacenar información del ganador
+                    $all_winners_info[] = [
+                        'name' => $winner['name'],
+                        'cid' => $winner['cid'],
+                        'phone' => $winner['phone'],
+                        'number' => $winning_number
+                    ];
+                    
+                    
+                    // Preparar mensaje para el jugador
+                    $player_msg = str_replace(
+                        ['{name}', '{raffle_id}', '{raffle_title}', '{raffle_date}', '{winning_number}'],
+                        [$winner['name'], $raffle_id, $raffle['r_title'], $raffle['r_date'], $winning_number],
+                        $winner_message_template
+                    );
+                    
+                    // Enviar mensaje al jugador
+                    sendWhatsAppMessage($winner['phone'], prepareWhatsAppText($player_msg), $session_whatsapp);
+                    
+                    // Agregar detalles al mensaje del administrador
+                    $winner_details .= "
+*Nombre:* {$winner['name']}
+*Cédula:* {$winner['cid']}
+*Teléfono:* {$winner['phone']}
+*Número Ganador:* {$winning_number}
+
+";
+                    
+                    break; // Solo un mensaje por número ganador
+                }
+            }
+        }
+    }
+    
+    // Preparar mensaje para el administrador
+    $admin_msg = str_replace(
+        ['{raffle_id}', '{raffle_title}', '{raffle_date}', '{winning_numbers}', '{winner_details}'],
+        [$raffle_id, $raffle['r_title'], $raffle['r_date'], $winners_str, $winner_details],
+        $admin_message_template
+    );
+    
+    // Enviar mensaje al administrador
+    sendWhatsAppMessage($admin_phone, prepareWhatsAppText($admin_msg), $session_whatsapp);
+    
+    $_SESSION['success_message'] = "Ganadores registrados y notificaciones enviadas correctamente";
+    header('Location: raffles.php');
+    exit;
+}
+
+// Procesar búsqueda
+if (isset($_GET['search'])) {
+    $search_term = '%' . $_GET['search'] . '%';
+    $stmt = $pdo->prepare("
+        SELECT * 
+        FROM raffles 
+        WHERE r_title LIKE ? OR r_description LIKE ?
+        ORDER BY id DESC
+    ");
+    $stmt->execute([$search_term, $search_term]);
+    $search_results = $stmt->fetchAll();
+    if (empty($search_results)) {
+        $search_message = "No se encontraron resultados para '" . htmlspecialchars($_GET['search']) . "'";
+    }
+} else {
+    // Obtener todos los sorteos
+    $stmt = $pdo->query("SELECT * FROM raffles ORDER BY id DESC");
+    $raffles = $stmt->fetchAll();
+}
+
+// Función para preparar texto para WhatsApp
+function prepareWhatsAppText($text) {
+    // Eliminar espacios en blanco al inicio de cada línea
+    $lines = explode("\n", $text);
+    $cleaned_lines = array_map('trim', $lines);
+    return implode("\n", $cleaned_lines);
+}
+
+// Función para enviar mensajes por WhatsApp
+function sendWhatsAppMessage($phone, $message, $sessionId) {
+    $phoneEncoded = rawurlencode($phone);
+    // Codificar el mensaje manteniendo los caracteres especiales
+    $message = mb_convert_encoding($message, 'UTF-8', 'auto');
+    $msgEncoded = rawurlencode($message);
+    $url = "https://api.telematico.work/send?number=".$phoneEncoded."&message=".$msgEncoded."&sessionId=".$sessionId;
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    
+    return $response;
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sorteos - Admin Gana Venezuela</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        /* Estilos generales */
+        .admin-container {
+            width: 95%;
+            margin: 20px auto;
+            padding: 0;
+        }
+        .search-container {
+            display: flex;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .search-container input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #000f59;
+            border-radius: 4px 0 0 4px;
+        }
+        .search-container button {
+            padding: 10px 20px;
+            background-color: #000f59;
+            color: white;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .data-container {
+            background-color: #f0f0f0;
+            color: black;
+            width: 100%;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .table-container {
+            overflow-x: auto;
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #000f59;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            width: 100%;
+            display: block;
+            text-align: center;
+        }
+        .edit-btn {
+            background-color: #ff6f00;
+            color: white;
+        }
+        .delete-btn {
+            background-color: #cd1313;
+            color: white;
+        }
+        .winners-btn {
+            background-color: #4a148c;
+            color: white;
+        }
+        .add-btn {
+            background-color: #118611;
+            color: white;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .status-active {
+            color: #118611;
+            font-weight: bold;
+        }
+        .status-inactive {
+            color: #cd1313;
+            font-weight: bold;
+        }
+        .status-completed {
+            color: #000f59;
+            font-weight: bold;
+        }
+        .raffle-image {
+            max-width: 100px;
+            cursor: pointer;
+        }
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: flex-start;
+            align-items: center;
+            overflow-y: auto;
+            padding: 20px 0;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            width: 95%;
+            max-width: 500px;
+            color: black;
+            margin: 0 auto;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-content h2 {
+            color: black;
+            margin-top: 0;
+        }
+        .modal-content label {
+            color: black;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .modal-content input,
+        .modal-content select,
+        .modal-content textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .modal-content textarea {
+            min-height: 100px;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-buttons button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 100px;
+            flex: 1;
+            max-width: 120px;
+        }
+        .save-btn {
+            background-color: #118611;
+            color: white;
+        }
+        .close-btn {
+            background-color: #000f59;
+            color: white;
+        }
+        .add-more-btn {
+            background-color: #ff6f00;
+            color: white;
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .search-message {
+            text-align: center;
+            padding: 10px;
+            background-color: #ffeb3b;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .success-message {
+            text-align: center;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .error-message {
+            text-align: center;
+            padding: 10px;
+            background-color: #f44336;
+            color: white;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        /* Modal de imagen */
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            z-index: 1001;
+            justify-content: center;
+            align-items: center;
+        }
+        .image-modal img {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .image-modal span {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .winner-input-container {
+            margin-bottom: 15px;
+        }
+        .winner-input-group {
+            display: flex;
+            margin-bottom: 10px;
+        }
+        .winner-input-group input {
+            flex: 1;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <?php include 'admin_header.php'; ?>
+    <div class="admin-container">
+        <div class="data-container">
+            <?php if (isset($_SESSION['success_message'])): ?>
+                <div class="success-message"><?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?></div>
+            <?php endif; ?>
+            <?php if (isset($_SESSION['error_message'])): ?>
+                <div class="error-message"><?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?></div>
+            <?php endif; ?>
+            <button class="add-btn" onclick="openRaffleModal(0)">Agregar Sorteo</button>
+            <form method="GET" class="search-container">
+                <input type="text" name="search" placeholder="Buscar por título o descripción..." value="<?php echo isset($_GET['search']) ? htmlspecialchars($_GET['search']) : ''; ?>">
+                <button type="submit">Buscar</button>
+            </form>
+            <?php if (isset($search_message)): ?>
+                <div class="search-message"><?php echo $search_message; ?></div>
+            <?php endif; ?>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID Sorteo</th>
+                            <th>Descripción</th>
+                            <th>Fecha</th>
+                            <th>Precio</th>
+                            <th>Números</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php 
+                        $raffles_to_display = isset($_GET['search']) ? $search_results : $raffles;
+                        foreach ($raffles_to_display as $raffle): 
+                        ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($raffle['id']); ?></td>
+                            <td>
+                                <p><?php echo htmlspecialchars(substr($raffle['r_description'], 0, 50)) . '...'; ?></p>
+                                <?php if ($raffle['r_description_image']): ?>
+                                    <img src="uploads/<?php echo htmlspecialchars($raffle['r_description_image']); ?>" class="raffle-image" onclick="openImageModal(this.src)">
+                                <?php endif; ?>
+                            </td>
+                            <td><?php echo htmlspecialchars($raffle['r_date']); ?></td>
+                            <td>Bs. <?php echo number_format($raffle['r_price'], 2); ?></td>
+                            <td><?php echo str_pad($raffle['begin'], 4, '0', STR_PAD_LEFT); ?> - <?php echo str_pad($raffle['final'], 4, '0', STR_PAD_LEFT); ?></td>
+                            <td class="status-<?php echo $raffle['status']; ?>"><?php echo ucfirst($raffle['status']); ?></td>
+                            <td>
+                                <button class="action-btn edit-btn" onclick="openRaffleModal(<?php echo $raffle['id']; ?>)">Editar Sorteo</button>
+                                <button class="action-btn delete-btn" onclick="confirmDelete(<?php echo $raffle['id']; ?>)">Eliminar Sorteo</button>
+                                <button class="action-btn winners-btn" onclick="openWinnersModal(<?php echo $raffle['id']; ?>, '<?php echo $raffle['status']; ?>')">Procesar Ganadores</button>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para edición/creación de sorteos -->
+    <div id="raffleModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Nuevo Sorteo</h2>
+            <form id="raffleForm" method="POST" enctype="multipart/form-data">
+                <input type="hidden" id="raffleId" name="id" value="0">
+                <div class="form-group">
+                    <label for="title">Título:</label>
+                    <input type="text" id="title" name="title" required>
+                </div>
+                <div class="form-group">
+                    <label for="description">Descripción:</label>
+                    <textarea id="description" name="description" rows="4" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="date">Fecha:</label>
+                    <input type="datetime-local" id="date" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="price">Precio:</label>
+                    <input type="number" id="price" name="price" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="begin">Número Inicial:</label>
+                    <input type="number" id="begin" name="begin" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="final">Número Final:</label>
+                    <input type="number" id="final" name="final" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="status">Estado:</label>
+                    <select id="status" name="status" required>
+                        <option value="active">Activo</option>
+                        <option value="inactive">Inactivo</option>
+                        <option value="completed">Completado</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="description_image">Imagen Descriptiva:</label>
+                    <input type="file" id="description_image" name="description_image" accept="image/*">
+                    <small id="fileNameDisplay" style="display: none;">Archivo seleccionado: <span id="selectedFileName"></span></small>
+                </div>
+                <div class="modal-buttons">
+                    <button type="submit" class="save-btn">Guardar</button>
+                    <button type="button" class="close-btn" onclick="closeModal()">Cerrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para gestión de ganadores -->
+    <div id="winnersModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="winnersModalTitle">Ganadores del Sorteo</h2>
+            <form id="winnersForm" method="POST">
+                <input type="hidden" id="winnersRaffleId" name="raffle_id" value="0">
+                <div id="winnersContainer">
+                    <div class="winner-input-group">
+                        <input type="text" name="winners[]" placeholder="Número ganador (ej: 0001)" pattern="\d{4}" title="Debe ser un número de 4 dígitos">
+                    </div>
+                </div>
+                <button type="button" class="add-more-btn" onclick="addMoreWinnerField()">Agregar más números</button>
+                <div class="modal-buttons">
+                    <button type="submit" name="save_winners" class="save-btn">Guardar</button>
+                    <button type="button" class="close-btn" onclick="closeModal()">Cerrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal de confirmación de eliminación -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2>Confirmar Eliminación</h2>
+            <p id="confirmMessage">¿Estás seguro de eliminar este sorteo?</p>
+            <div class="modal-buttons">
+                <button class="delete-btn" id="confirmButton" style="width: 48%;">Eliminar</button>
+                <button class="close-btn" onclick="closeModal()" style="width: 48%;">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de imagen ampliada -->
+    <div id="imageModal" class="image-modal">
+        <span class="close" onclick="closeImageModal()">&times;</span>
+        <img id="expandedImage" src="" alt="Imagen ampliada">
+    </div>
+
+   <script>
+    function openRaffleModal(id) {
+        const modal = document.getElementById('raffleModal');
+        const form = document.getElementById('raffleForm');
+        form.reset();
+        document.getElementById('fileNameDisplay').style.display = 'none';
+        modal.style.display = 'flex';
+        document.getElementById('modalTitle').textContent = id > 0 ? 'Cargando...' : 'Nuevo Sorteo';
+        if (id > 0) {
+            fetch(`get_raffle.php?id=${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (!data || !data.success) {
+                        throw new Error(data?.error || 'Respuesta inválida del servidor');
+                    }
+                    document.getElementById('modalTitle').textContent = 'Editar Sorteo';
+                    document.getElementById('raffleId').value = data.data.id;
+                    document.getElementById('title').value = data.data.r_title;
+                    document.getElementById('description').value = data.data.r_description;
+                    document.getElementById('date').value = data.data.r_date.replace(' ', 'T');
+                    document.getElementById('price').value = data.data.r_price;
+                    document.getElementById('begin').value = data.data.begin;
+                    document.getElementById('final').value = data.data.final;
+                    document.getElementById('status').value = data.data.status;
+                })
+                .catch(error => {
+                    console.error('Error al cargar sorteo:', error);
+                    alert(error.message);
+                    closeModal();
+                });
+        }
+    }
+
+    function openWinnersModal(id, status) {
+        if (status !== 'active') {
+            alert('Solo se pueden registrar ganadores en sorteos activos');
+            return;
+        }
+        
+        const modal = document.getElementById('winnersModal');
+        document.getElementById('winnersRaffleId').value = id;
+        document.getElementById('winnersModalTitle').textContent = `Registrar Ganadores - Sorteo ${id}`;
+        
+        // Limpiar y agregar un campo inicial
+        const winnersContainer = document.getElementById('winnersContainer');
+        winnersContainer.innerHTML = `
+            <div class="winner-input-group">
+                <input type="text" name="winners[]" placeholder="Número ganador (ej: 0001)" pattern="\\d{4}" title="Debe ser un número de 4 dígitos" required>
+            </div>
+        `;
+        
+        modal.style.display = 'flex';
+    }
+
+    function addMoreWinnerField() {
+        const winnersContainer = document.getElementById('winnersContainer');
+        const newField = document.createElement('div');
+        newField.className = 'winner-input-group';
+        newField.innerHTML = `
+            <input type="text" name="winners[]" placeholder="Número ganador (ej: 0001)" pattern="\\d{4}" title="Debe ser un número de 4 dígitos">
+            <button type="button" class="delete-btn" onclick="this.parentElement.remove()" style="width: auto; padding: 8px;">X</button>
+        `;
+        winnersContainer.appendChild(newField);
+    }
+
+    function confirmDelete(id) {
+        const confirmModal = document.getElementById('confirmModal');
+        const confirmButton = document.getElementById('confirmButton');
+        confirmButton.onclick = function() {
+            window.location.href = `delete_raffle.php?id=${id}`;
+        };
+        confirmModal.style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('raffleModal').style.display = 'none';
+        document.getElementById('winnersModal').style.display = 'none';
+        document.getElementById('confirmModal').style.display = 'none';
+    }
+
+    function closeImageModal() {
+        document.getElementById('imageModal').style.display = 'none';
+    }
+
+    function openImageModal(src) {
+        const imageModal = document.getElementById('imageModal');
+        const expandedImage = document.getElementById('expandedImage');
+        expandedImage.src = src;
+        imageModal.style.display = 'flex';
+    }
+
+    // Mostrar el nombre del archivo seleccionado
+    document.getElementById('description_image').addEventListener('change', function(event) {
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const selectedFileName = document.getElementById('selectedFileName');
+        if (event.target.files.length > 0) {
+            selectedFileName.textContent = event.target.files[0].name;
+            fileNameDisplay.style.display = 'block';
+        } else {
+            fileNameDisplay.style.display = 'none';
+        }
+    });
+
+    // Confirmación antes de enviar el formulario de ganadores
+    document.getElementById('winnersForm').addEventListener('submit', function(e) {
+        // Permitir que el formulario se envíe normalmente si no hay validación personalizada
+        const winnerInputs = document.querySelectorAll('#winnersContainer input[type="text"]');
+        let hasEmptyFields = false;
+        
+        // Validar campos vacíos
+        winnerInputs.forEach(input => {
+            if (input.value.trim() === '') {
+                hasEmptyFields = true;
+                input.classList.add('error');
+            } else {
+                input.classList.remove('error');
+            }
+        });
+        
+        if (hasEmptyFields) {
+            alert('Todos los campos de números ganadores deben estar completos');
+            e.preventDefault();
+            return;
+        }
+        
+        // Validar formato de números
+        let hasInvalidNumbers = false;
+        const winners = [];
+        
+        winnerInputs.forEach(input => {
+            const value = input.value.trim();
+            if (!/^\d{4}$/.test(value)) {
+                hasInvalidNumbers = true;
+                input.classList.add('error');
+            } else {
+                winners.push(value);
+                input.classList.remove('error');
+            }
+        });
+        
+        if (hasInvalidNumbers) {
+            alert('Todos los números deben tener exactamente 4 dígitos');
+            e.preventDefault();
+            return;
+        }
+        
+        // Mostrar confirmación
+        const raffleId = document.getElementById('winnersRaffleId').value;
+        const confirmation = confirm(`¿Está seguro de registrar los siguientes números como ganadores del sorteo ${raffleId}?\n\nNúmeros: ${winners.join(', ')}\n\nEsta acción no se puede deshacer.`);
+        
+        if (!confirmation) {
+            e.preventDefault();
+        }
+    });
+
+    // Cerrar modal al hacer clic fuera del contenido
+    window.onclick = function(event) {
+        const raffleModal = document.getElementById('raffleModal');
+        const winnersModal = document.getElementById('winnersModal');
+        const confirmModal = document.getElementById('confirmModal');
+        const imageModal = document.getElementById('imageModal');
+        if (event.target === raffleModal || event.target === winnersModal || event.target === confirmModal) {
+            closeModal();
+        }
+        if (event.target === imageModal) {
+            closeImageModal();
+        }
+    };
+
+    // Ocultar mensajes después de 5 segundos
+    setTimeout(() => {
+        const successMessage = document.querySelector('.success-message');
+        const errorMessage = document.querySelector('.error-message');
+        if (successMessage) successMessage.style.display = 'none';
+        if (errorMessage) errorMessage.style.display = 'none';
+    }, 5000);
+</script>
+</body>
+</html>
+
+/* ----- Archivo PHP: sales.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+require_once 'db_connection.php';
+
+// Función para enviar mensajes por WhatsApp (manteniendo formato original)
+function sendWhatsAppMessage($phone, $message, $sessionId) {
+    // Codificar parámetros manteniendo formato
+    $phoneEncoded = rawurlencode($phone);
+    // Convertir a UTF-8 sin modificar saltos de línea
+    $message = mb_convert_encoding($message, 'UTF-8');
+    // Codificar mensaje conservando estructura original
+    $msgEncoded = rawurlencode($message);
+    $url = "https://api.telematico.work/send?number=".$phoneEncoded."&message=".$msgEncoded."&sessionId=".$sessionId;
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    return $response;
+}
+
+// Procesar cambio de estado (POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
+    $id = intval($_POST['id']);
+    $status = $_POST['status'];
+    $allowed_statuses = ['pending', 'completed', 'cancelled'];
+    if (!in_array($status, $allowed_statuses)) {
+        $_SESSION['error_message'] = "Estado no válido";
+        header('Location: sales.php');
+        exit;
+    }
+    // Obtener datos actuales de la venta
+    $stmt = $pdo->prepare("SELECT b.*, r.r_title as raffle_name FROM buy b LEFT JOIN raffles r ON b.raffle = r.id WHERE b.id = ?");
+    $stmt->execute([$id]);
+    $sale = $stmt->fetch();
+    if (!$sale) {
+        $_SESSION['error_message'] = "Venta no encontrada";
+        header('Location: sales.php');
+        exit;
+    }
+    // Actualizar el estado
+    $stmt = $pdo->prepare("UPDATE buy SET status = ? WHERE id = ?");
+    if ($stmt->execute([$status, $id])) {
+        $_SESSION['success_message'] = "Estado actualizado correctamente";
+        // Enviar WhatsApp si el estado es completed o cancelled
+        if (in_array($status, ['completed', 'cancelled'])) {
+            // Obtener configuración de WhatsApp
+            $stmt = $pdo->query("SELECT session_whatsapp FROM features LIMIT 1");
+            $features = $stmt->fetch();
+            $session_whatsapp = $features['session_whatsapp'] ?? '';
+            if (!empty($session_whatsapp) && !empty($sale['phone'])) {
+                // Preparar mensaje según el estado (formato original)
+                if ($status === 'completed') {
+                    // Separar números en formato [0000] [0000] [0000]
+                    $numbers = explode(',', $sale['number']);
+                    $formatted_numbers = '';
+                    foreach ($numbers as $num) {
+                        $formatted_numbers .= '*[' . trim($num) . ']* ';
+                    }
+                    $message = "
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+*COMPRA APROBADA*
+
+Sr(a). *{$sale['name']}*, su compra ha sido aprobada:
+
+-------
+ID Venta: *{$sale['id']}*
+Sorteo: *{$sale['raffle_name']}*
+Números: {$formatted_numbers}
+Estado: ✅ *APROBADO*
+-------
+
+*_¡Gracias por su compra!_*
+                    ";
+                } else { // cancelled
+                    // Separar números en formato [0000] [0000] [0000]
+                    $numbers = explode(',', $sale['number']);
+                    $formatted_numbers = '';
+                    foreach ($numbers as $num) {
+                        $formatted_numbers .= '*[' . trim($num) . ']* ';
+                    }
+                    $message = "
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+*COMPRA CANCELADA*
+
+Sr(a). *{$sale['name']}*, lamentamos informarle que su compra ha sido cancelada:
+
+-------
+ID Venta: *{$sale['id']}*
+Sorteo: *{$sale['raffle_name']}*
+Estado: ⛔ *CANCELADO*
+-------
+
+Para más información, responda con la palabra *AYUDA* a este mensaje.
+                    ";
+                }
+                // Enviar mensaje sin modificar saltos de línea
+                sendWhatsAppMessage($sale['phone'], $message, $session_whatsapp);
+            }
+        }
+    } else {
+        $_SESSION['error_message'] = "Error al actualizar el estado";
+    }
+    header('Location: sales.php');
+    exit;
+}
+
+// Búsqueda
+$search_results = [];
+if (isset($_GET['search'])) {
+    $search_term = '%' . $_GET['search'] . '%';
+    $stmt = $pdo->prepare("
+        SELECT b.* 
+        FROM buy b 
+        WHERE b.id LIKE ? OR b.cid LIKE ? OR b.name LIKE ? OR b.phone LIKE ? OR b.number LIKE ?
+        ORDER BY b.date DESC
+    ");
+    $stmt->execute([$search_term, $search_term, $search_term, $search_term, $search_term]);
+    $search_results = $stmt->fetchAll();
+    if (empty($search_results)) {
+        $search_message = "No se encontraron resultados para '".htmlspecialchars($_GET['search'])."'";
+    }
+}
+
+// Obtener lista de ventas
+$sales = $pdo->query("
+    SELECT b.*, r.r_title as raffle_name 
+    FROM buy b 
+    LEFT JOIN raffles r ON b.raffle = r.id 
+    ORDER BY b.date DESC
+")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ventas - Admin Gana Venezuela</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .admin-container {
+            width: 95%;
+            margin: 20px auto;
+            padding: 0;
+        }
+        .search-container {
+            display: flex;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .search-container input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #000f59;
+            border-radius: 4px 0 0 4px;
+        }
+        .search-container button {
+            padding: 10px 20px;
+            background-color: #000f59;
+            color: white;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .data-container {
+            background-color: #f0f0f0;
+            color: black;
+            width: 100%;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .table-container {
+            overflow-x: auto;
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            table-layout: fixed;
+        }
+        th:nth-child(1), td:nth-child(1) { width: 80px; }
+        th:nth-child(2), td:nth-child(2) { width: 120px; }
+        th:nth-child(3), td:nth-child(3) { width: 80px; }
+        th:nth-child(4), td:nth-child(4) { width: 200px; }
+        th:nth-child(5), td:nth-child(5) { width: 200px; }
+        th:nth-child(6), td:nth-child(6) { width: 100px; }
+        th:nth-child(7), td:nth-child(7) { width: 150px; }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: center; /* Centrado para todas las celdas */
+            word-wrap: break-word;
+            vertical-align: middle; /* Alineación vertical centrada */
+        }
+        th {
+            background-color: #000f59;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .status-pending {
+            color: #ff6f00;
+            font-weight: bold;
+        }
+        .status-completed {
+            color: #118611;
+            font-weight: bold;
+        }
+        .status-cancelled {
+            color: #cd1313;
+            font-weight: bold;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            width: 100%;
+            display: block;
+            text-align: center;
+        }
+        .view-btn {
+            background-color: #007bff;
+            color: white;
+        }
+        .complete-btn {
+            background-color: #118611;
+            color: white;
+        }
+        .cancel-btn {
+            background-color: #cd1313;
+            color: white;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            width: 95%;
+            max-width: 500px;
+            color:#000;
+        }
+        .modal-content h2 {
+            color: black;
+            margin-top: 0;
+        }
+        .modal-content p {
+            margin: 10px 0;
+            word-wrap: break-word;
+            max-width: 100%;
+            overflow-wrap: break-word;
+        }
+        .modal-content strong {
+            color: black;
+        }
+        .close {
+            float: right;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .receipt-link {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 3px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-buttons button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 30%;
+        }
+        .search-message {
+            text-align: center;
+            padding: 10px;
+            background-color: #ffeb3b;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            z-index: 1100;
+            justify-content: center;
+            align-items: center;
+        }
+        .image-modal-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .image-modal-content img {
+            width: 100%;
+            height: auto;
+            max-height: 80vh;
+            object-fit: contain;
+        }
+        .image-modal-close {
+            position: absolute;
+            top: 15px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .image-modal-buttons button {
+            padding: 10px 20px;
+            background-color: #000f59;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .number-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: center; /* Centrado horizontal para los números */
+        }
+        .number-item {
+            display: inline-block;
+            padding: 2px 5px;
+            background-color: #e0e0e0;
+            border-radius: 3px;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <?php include 'admin_header.php'; ?>
+    <?php if (isset($_SESSION['success_message'])): ?>
+        <div style="background:#d4edda; color:#155724; padding:15px; margin:10px 0; border-radius:4px; text-align:center;">
+            <?php echo $_SESSION['success_message']; ?>
+        </div>
+        <?php unset($_SESSION['success_message']); ?>
+    <?php endif; ?>
+    <?php if (isset($_SESSION['error_message'])): ?>
+        <div style="background:#f8d7da; color:#721c24; padding:15px; margin:10px 0; border-radius:4px; text-align:center;">
+            <?php echo $_SESSION['error_message']; ?>
+        </div>
+        <?php unset($_SESSION['error_message']); ?>
+    <?php endif; ?>
+    <div class="admin-container">
+        <div class="data-container">
+            <form method="GET" class="search-container">
+                <input type="text" name="search" placeholder="Buscar por ID, cédula, nombre, teléfono o número..." 
+                       value="<?php echo isset($_GET['search']) ? htmlspecialchars($_GET['search']) : ''; ?>">
+                <button type="submit">Buscar</button>
+            </form>
+            <?php if (isset($search_message)): ?>
+                <div class="search-message"><?php echo $search_message; ?></div>
+            <?php endif; ?>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID Venta</th>
+                            <th>Fecha</th>
+                            <th>ID Sorteo</th>
+                            <th>Cliente</th>
+                            <th>Número</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php 
+                        $sales_to_display = isset($_GET['search']) ? $search_results : $sales;
+                        foreach ($sales_to_display as $sale): 
+                        ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($sale['id']); ?></td>
+                            <td><?php echo htmlspecialchars($sale['date']); ?></td>
+                            <td><?php echo htmlspecialchars($sale['raffle']); ?></td>
+                            <td>
+                                <div style="text-align: center;"> <!-- Contenedor centrado para datos del cliente -->
+                                    <strong><?php echo htmlspecialchars($sale['name']); ?></strong><br>
+                                    <small><strong>C.I.:</strong> <?php echo htmlspecialchars($sale['cid']); ?></small><br>
+                                    <small><strong>Tel: </strong>+<?php echo htmlspecialchars($sale['phone']); ?></small>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="number-group">
+                                    <?php 
+                                    $numbers = explode(',', $sale['number']);
+                                    $count = 0;
+                                    foreach ($numbers as $number):
+                                        $number = trim($number);
+                                        if (!empty($number)):
+                                            $count++;
+                                    ?>
+                                        <span class="number-item"><?php echo htmlspecialchars($number); ?></span>
+                                        <?php if ($count % 3 == 0): ?>
+                                            </div><div class="number-group">
+                                        <?php endif; ?>
+                                    <?php 
+                                        endif;
+                                    endforeach; 
+                                    ?>
+                                </div>
+                            </td>
+                            <td class="status-<?php echo $sale['status']; ?>"><?php echo strtoupper($sale['status']); ?></td>
+                            <td>
+                                <button class="action-btn view-btn" onclick="openSaleModal('<?php echo $sale['id']; ?>')">
+                                    Ver Detalles
+                                </button>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <!-- Modal de detalles -->
+    <div id="saleModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeSaleModal()">&times;</span>
+            <h2>Detalles de la Venta</h2>
+            <div id="saleDetails">
+                <!-- Detalles se llenarán con JavaScript -->
+            </div>
+            <div class="modal-buttons">
+                <button class="complete-btn" onclick="confirmUpdate(selectedId, 'completed')">Completar</button>
+                <button class="cancel-btn" onclick="confirmUpdate(selectedId, 'cancelled')">Cancelar</button>
+                <button onclick="closeSaleModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+    <!-- Modal de imagen de comprobante -->
+    <div id="receiptImageModal" class="image-modal">
+        <div class="image-modal-content">
+            <span class="image-modal-close" onclick="closeReceiptModal()">&times;</span>
+            <img id="receiptImage" src="" alt="Comprobante de pago">
+        </div>
+    </div>
+    <!-- Formulario oculto para actualización -->
+    <form id="updateForm" method="POST" action="sales.php">
+        <input type="hidden" name="update_status" value="1">
+        <input type="hidden" name="id" id="updateId">
+        <input type="hidden" name="status" id="updateStatus">
+    </form>
+    <script>
+        let selectedId = null;
+
+        function formatNumbers(numberString) {
+            const numbers = numberString.split(',');
+            let formatted = '';
+            let count = 0;
+            numbers.forEach((num, index) => {
+                num = num.trim();
+                if (num) {
+                    formatted += `<span class="number-item">${num}</span>`;
+                    count++;
+                    if (count % 3 === 0 && index !== numbers.length - 1) {
+                        formatted += '<br>';
+                    }
+                }
+            });
+            return `<div class="number-group">${formatted}</div>`;
+        }
+
+        function openSaleModal(id) {
+            selectedId = id;
+            fetch(`get_sale.php?id=${id}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Error en la respuesta del servidor');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data || !data.data || !data.data.buy) {
+                        throw new Error('Estructura de datos incorrecta');
+                    }
+                    const buyData = data.data.buy;
+                    const raffleData = data.data.raffle || {};
+                    const amount = data.data.amount || 0;
+
+                    const details = `
+                        <p><strong>ID Venta:</strong> ${buyData.id}</p>
+                        <p><strong>Fecha:</strong> ${buyData.date}</p>
+                        <p><strong>ID Rifa:</strong> ${buyData.raffle_id || ''}</p>
+                        <p><strong>Cliente:</strong> ${buyData.name}</p>
+                        <p><strong>Cédula:</strong> ${buyData.cid}</p>
+                        <p><strong>Teléfono:</strong> +${buyData.phone}</p>
+                        <p><strong>Números:</strong> ${formatNumbers(buyData.number)}</p>
+                        <p><strong>Estado:</strong> <span class="status-${buyData.status}">${buyData.status.toUpperCase()}</span></p>
+                        <p><strong>Monto:</strong> Bs. ${amount.toFixed(2)}</p>
+                        <p><strong>Comprobante:</strong> ${
+                            buyData.capture && buyData.capture.trim() !== "" 
+                            ? `<a href="#" class="receipt-link" onclick="openReceiptModal('${buyData.capture.trim()}'); return false;">Ver Recibo</a>`
+                            : "No hay comprobante"
+                        }</p>
+                    `;
+                    document.getElementById('saleDetails').innerHTML = details;
+                    document.getElementById('saleModal').style.display = 'flex';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al cargar los detalles: ' + error.message);
+                });
+        }
+
+        function closeSaleModal() {
+            document.getElementById('saleModal').style.display = 'none';
+        }
+
+        function confirmUpdate(id, status) {
+            if (confirm(`¿Estás seguro de marcar esta venta como ${status}?`)) {
+                document.getElementById('updateId').value = id;
+                document.getElementById('updateStatus').value = status;
+                document.getElementById('updateForm').submit();
+            }
+        }
+
+        function openReceiptModal(imageSrc) {
+            document.getElementById('receiptImage').src = imageSrc;
+            document.getElementById('receiptImageModal').style.display = 'flex';
+        }
+
+        function closeReceiptModal() {
+            document.getElementById('receiptImageModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            if (event.target === document.getElementById('saleModal')) {
+                closeSaleModal();
+            }
+            if (event.target === document.getElementById('receiptImageModal')) {
+                closeReceiptModal();
+            }
+        };
+    </script>
+</body>
+</html>
+
+/* ----- Archivo PHP: save_mobile.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $bank = strtoupper($_POST['bank']) ?? '';
+    $cid = strtoupper($_POST['cid']) ?? '';
+    $phone = $_POST['phone'] ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET bank = ?, cid = ?, phone = ? WHERE id = 1");
+        $stmt->execute([$bank, $cid, $phone]);
+        
+        $_SESSION['success_message'] = "Datos de Pago Móvil actualizados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar Pago Móvil: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_paypal.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $paypal = strtolower($_POST['paypal']) ?? '';
+    $paypal_titleholder = strtoupper($_POST['paypal_titleholder']) ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET paypal = ?, paypal_titleholder = ? WHERE id = 1");
+        $stmt->execute([$paypal, $paypal_titleholder]);
+        
+        $_SESSION['success_message'] = "Datos de PayPal actualizados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar PayPal: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_rate.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rate = $_POST['rate'] ?? 0;
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET rate = ? WHERE id = 1");
+        $stmt->execute([$rate]);
+        
+        $_SESSION['success_message'] = "Tasa de cambio actualizada correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar la tasa: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_session.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $session_whatsapp = $_POST['session_whatsapp'] ?? '';
+    $session_phone = $_POST['session_phone'] ?? '';
+
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET session_whatsapp = ?, session_phone = ? WHERE id = 1");
+        $stmt->execute([$session_whatsapp, $session_phone]);
+        $_SESSION['success_message'] = "Datos de sesión guardados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al guardar datos de sesión: " . $e->getMessage();
+    }
+}
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_yape.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $yape = strtolower($_POST['yape']) ?? '';
+    $yape_titleholder = strtoupper($_POST['yape_titleholder']) ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET yape = ?, yape_titleholder = ? WHERE id = 1");
+        $stmt->execute([$yape, $yape_titleholder]);
+        
+        $_SESSION['success_message'] = "Datos de Yape actualizados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar Yape: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_zelle.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $zelle = ($_POST['zelle']) ?? '';
+    $zelle_titleholder = strtoupper($_POST['zelle_titleholder']) ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET zelle = ?, zelle_titleholder = ? WHERE id = 1");
+        $stmt->execute([$zelle, $zelle_titleholder]);
+        
+        $_SESSION['success_message'] = "Datos de Zelle actualizados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar Zelle: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: save_zinli.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once 'db_connection.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $zinli = strtolower($_POST['zinli']) ?? '';
+    $zinli_titleholder = strtoupper($_POST['zinli_titleholder']) ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE features SET zinli = ?, zinli_titleholder = ? WHERE id = 1");
+        $stmt->execute([$zinli, $zinli_titleholder]);
+        
+        $_SESSION['success_message'] = "Datos de Zinli actualizados correctamente";
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar Zinli: " . $e->getMessage();
+    }
+}
+
+header('Location: settings.php');
+exit;
+?>
+
+/* ----- Archivo PHP: settings.php ----- */
+<?php
+session_start();
+require_once 'auth_functions.php';
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+require_once 'db_connection.php';
+
+// Mostrar mensaje de éxito si existe
+$success_message = $_SESSION['success_message'] ?? '';
+unset($_SESSION['success_message']);
+
+// Obtener configuración actual
+$settings = $pdo->query("SELECT * FROM features LIMIT 1")->fetch();
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuración - Admin Gana Venezuela</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .admin-container {
+            width: 95%;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .settings-form {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #000;
+        }
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #000f59;
+            border-radius: 4px;
+            color: #000;
+        }
+        .form-section {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+        }
+        .form-section h3 {
+            color: #000f59;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #000f59;
+            padding-bottom: 5px;
+        }
+        .save-btn {
+            background-color: #118611;
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .save-btn:hover {
+            background-color: #0e6e0e;
+        }
+        .success-message {
+            color: #118611;
+            text-align: center;
+            margin-bottom: 15px;
+            font-weight: bold;
+            padding: 10px;
+            background-color: #dff0d8;
+            border-radius: 4px;
+        }
+        .error-message {
+            color: #cd1313;
+            text-align: center;
+            margin-bottom: 15px;
+            font-weight: bold;
+            padding: 10px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+<?php include 'admin_header.php'; ?>
+    <div class="admin-container">
+        <?php if ($success_message): ?>
+            <div class="success-message"><?php echo $success_message; ?></div>
+        <?php endif; ?>
+      <div class="settings-form">
+        <form id="sessionForm" action="save_session.php" method="POST">
+            <div class="form-section">
+                    <h3>Mensajería WhatsApp</h3>
+                    <div class="form-group">
+                        <label for="session_whatsapp">Sesión WhatsApp:</label>
+                        <input type="text" id="session_whatsapp" name="session_whatsapp" value="<?php echo htmlspecialchars($settings['session_whatsapp']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="session_phone">Teléfono:</label>
+                        <input type="text" id="session_phone" name="session_phone" value="<?php echo htmlspecialchars($settings['session_phone']); ?>" oninput="formatPhoneNumber(this)">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar Sesión</button>
+                    </div>
+                </div>
+            </form>
+            <form id="mobileForm" action="save_mobile.php" method="POST">
+                <div class="form-section">
+                    <h3>Pago Móvil</h3>
+                    <div class="form-group">
+                        <label for="bank">Banco:</label>
+                        <input type="text" id="bank" name="bank" value="<?php echo htmlspecialchars($settings['bank']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="cid">Cédula:</label>
+                        <input type="text" id="cid" name="cid" value="<?php echo htmlspecialchars($settings['cid']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="phone">Teléfono:</label>
+                        <input type="text" id="phone" name="phone" value="<?php echo htmlspecialchars($settings['phone']); ?>">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar Pago Móvil</button>
+                    </div>
+                </div>
+            </form>
+            <form id="paypalForm" action="save_paypal.php" method="POST">
+                <div class="form-section">
+                    <h3>PayPal</h3>
+                    <div class="form-group">
+                        <label for="paypal">Correo PayPal:</label>
+                        <input type="email" id="paypal" name="paypal" value="<?php echo htmlspecialchars($settings['paypal']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="paypal_titleholder">Titular:</label>
+                        <input type="text" id="paypal_titleholder" name="paypal_titleholder" value="<?php echo htmlspecialchars($settings['paypal_titleholder']); ?>">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar PayPal</button>
+                    </div>
+                </div>
+            </form>
+            <form id="zelleForm" action="save_zelle.php" method="POST">
+                <div class="form-section">
+                    <h3>Zelle</h3>
+                    <div class="form-group">
+                        <label for="zelle">Correo/Teléfono Zelle:</label>
+                        <input type="text" id="zelle" name="zelle" value="<?php echo htmlspecialchars($settings['zelle']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="zelle_titleholder">Titular:</label>
+                        <input type="text" id="zelle_titleholder" name="zelle_titleholder" value="<?php echo htmlspecialchars($settings['zelle_titleholder']); ?>">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar Zelle</button>
+                    </div>
+                </div>
+            </form>
+            <form id="zinliForm" action="save_zinli.php" method="POST">
+                <div class="form-section">
+                    <h3>Zinli</h3>
+                    <div class="form-group">
+                        <label for="zinli">Usuario Zinli:</label>
+                        <input type="text" id="zinli" name="zinli" value="<?php echo htmlspecialchars($settings['zinli']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="zinli_titleholder">Titular:</label>
+                        <input type="text" id="zinli_titleholder" name="zinli_titleholder" value="<?php echo htmlspecialchars($settings['zinli_titleholder']); ?>">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar Zinli</button>
+                    </div>
+                </div>
+            </form>
+            <form id="yapeForm" action="save_yape.php" method="POST">
+                <div class="form-section">
+                    <h3>Yape</h3>
+                    <div class="form-group">
+                        <label for="yape">Teléfono/Código Yape:</label>
+                        <input type="text" id="yape" name="yape" value="<?php echo htmlspecialchars($settings['yape']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="yape_titleholder">Titular:</label>
+                        <input type="text" id="yape_titleholder" name="yape_titleholder" value="<?php echo htmlspecialchars($settings['yape_titleholder']); ?>">
+                    </div>
+                    <div class="button-container">
+                        <button type="submit" class="save-btn">Guardar Yape</button>
+                    </div>
+                </div>
+            </form>
+      </div>
+    </div>
+    <script>
+        function formatPhoneNumber(input) {
+            let phone = input.value.replace(/\D/g, '');
+            if (phone.startsWith('04')) {
+                phone = '584' + phone.slice(2);
+            }
+            input.value = phone;
+        }
+    </script>
+</body>
+</html>
+
+/* ----- Archivo PHP: test.php ----- */
+<?php
+session_start();
+require 'auth_functions.php';
+
+// Probar autenticación
+if (authenticate_user('admin', '16355034')) {
+    echo "Autenticación exitosa!";
+    echo "<pre>Datos de sesión: ";
+    print_r($_SESSION);
+    echo "</pre>";
+} else {
+    echo "Fallo en autenticación";
+}
+
+// Verificar datos en BD
+require 'db_connection.php';
+$user = $pdo->query("SELECT * FROM security WHERE username = 'admin'")->fetch();
+echo "<pre>Datos en BD: ";
+print_r($user);
+echo "</pre>";
+
+/* ----- Archivo PHP: unir.php ----- */
+<?php
+// Forzar codificación UTF-8 para el script
+header('Content-Type: text/html; charset=UTF-8');
+
+// Verificar si se ha enviado el formulario
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $nombre_archivo = trim($_POST['nombre_archivo']);
+    if (!empty($nombre_archivo)) {
+        // Validar que el nombre del archivo termine en .txt
+        if (substr($nombre_archivo, -4) !== '.txt') {
+            $nombre_archivo .= '.txt';
+        }
+
+        // Función para buscar credenciales de la base de datos en archivos PHP
+        function obtener_credenciales_db($archivos_php) {
+            $credenciales = [];
+            foreach ($archivos_php as $archivo) {
+                $contenido = file_get_contents($archivo);
+                // Convertir contenido a UTF-8 si no lo es
+                $contenido = mb_convert_encoding($contenido, 'UTF-8', mb_detect_encoding($contenido, 'UTF-8, ISO-8859-1', true));
+                if (preg_match('/\$host\s*=\s*[\'"]([^\'"]+)[\'"];/', $contenido, $matches_host) &&
+                    preg_match('/\$username\s*=\s*[\'"]([^\'"]+)[\'"];/', $contenido, $matches_user) &&
+                    preg_match('/\$password\s*=\s*[\'"]([^\'"]+)[\'"];/', $contenido, $matches_password) &&
+                    preg_match('/\$dbname\s*=\s*[\'"]([^\'"]+)[\'"];/', $contenido, $matches_dbname)) {
+                    $credenciales = [
+                        'host' => $matches_host[1],
+                        'username' => $matches_user[1],
+                        'password' => $matches_password[1],
+                        'dbname' => $matches_dbname[1]
+                    ];
+                    break; // Detenerse al encontrar las primeras credenciales válidas
+                }
+            }
+            return $credenciales;
+        }
+
+        // Obtener todos los archivos PHP, JS y CSS
+        $archivos_php = glob('*.php');
+        $archivos_js = glob('*.js');
+        $archivos_css = glob('*.css');
+
+        // Unificar el contenido de los archivos
+        $output = '';
+        foreach ($archivos_php as $archivo) {
+            $contenido = file_get_contents($archivo);
+            $contenido = mb_convert_encoding($contenido, 'UTF-8', mb_detect_encoding($contenido, 'UTF-8, ISO-8859-1', true));
+            $output .= "/* ----- Archivo PHP: $archivo ----- */\n" . $contenido . "\n\n";
+        }
+        foreach ($archivos_js as $archivo) {
+            $contenido = file_get_contents($archivo);
+            $contenido = mb_convert_encoding($contenido, 'UTF-8', mb_detect_encoding($contenido, 'UTF-8, ISO-8859-1', true));
+            $output .= "/* ----- Archivo JS: $archivo ----- */\n" . $contenido . "\n\n";
+        }
+        foreach ($archivos_css as $archivo) {
+            $contenido = file_get_contents($archivo);
+            $contenido = mb_convert_encoding($contenido, 'UTF-8', mb_detect_encoding($contenido, 'UTF-8, ISO-8859-1', true));
+            $output .= "/* ----- Archivo CSS: $archivo ----- */\n" . $contenido . "\n\n";
+        }
+
+        // Obtener credenciales de la base de datos
+        $credenciales = obtener_credenciales_db($archivos_php);
+
+        // Generar SQL de la estructura de las tablas
+        if (!empty($credenciales)) {
+            try {
+                $pdo = new PDO("mysql:host={$credenciales['host']};dbname={$credenciales['dbname']}", $credenciales['username'], $credenciales['password']);
+                $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+                $tablas = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+                $output .= "/* ----- Estructura de la Base de Datos ----- */\n";
+                foreach ($tablas as $tabla) {
+                    $create_table_sql = $pdo->query("SHOW CREATE TABLE `$tabla`")->fetch(PDO::FETCH_ASSOC)['Create Table'];
+                    // Convertir el SQL a UTF-8 si no lo es
+                    $create_table_sql = mb_convert_encoding($create_table_sql, 'UTF-8', mb_detect_encoding($create_table_sql, 'UTF-8, ISO-8859-1', true));
+                    $output .= "/* ----- Tabla: $tabla ----- */\n" . $create_table_sql . ";\n\n";
+                }
+            } catch (Exception $e) {
+                $output .= "/* ERROR: No se pudo conectar a la base de datos o generar el SQL. Mensaje: {$e->getMessage()} */\n";
+            }
+        } else {
+            $output .= "/* ERROR: No se encontraron credenciales de la base de datos en los archivos PHP. */\n";
+        }
+
+        // Guardar el contenido en el archivo TXT
+        file_put_contents($nombre_archivo, $output);
+        $archivo_generado = true;
+    } else {
+        $error = "Por favor, ingresa un nombre de archivo válido.";
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chain.php</title>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            width: 95%;
+            margin: 10px auto;
+            background-color: #f0f0f0;
+            color: black;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .mensaje {
+            margin-top: 20px;
+            text-align: center;
+        }
+        a {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+        a:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generador de Archivo Unificado</h1>
+        <form method="POST">
+            <label for="nombre_archivo">Nombre del archivo TXT:</label>
+            <input type="text" id="nombre_archivo" name="nombre_archivo" placeholder="Ejemplo: archivo.txt" required>
+            <button type="submit">Ejecutar</button>
+        </form>
+
+        <?php if (isset($error)): ?>
+            <p class="mensaje" style="color: red;"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></p>
+        <?php elseif (isset($archivo_generado) && $archivo_generado): ?>
+            <p class="mensaje" style="color: green;">El archivo <strong><?php echo htmlspecialchars($nombre_archivo, ENT_QUOTES, 'UTF-8'); ?></strong> ha sido generado correctamente.</p>
+            <a href="<?php echo htmlspecialchars($nombre_archivo, ENT_QUOTES, 'UTF-8'); ?>" download>Descargar Archivo</a>
+        <?php endif; ?>
+    </div>
+</body>
+</html>
+
+/* ----- Archivo PHP: users.php ----- */
+<?php
+// Habilitar visualización de errores para desarrollo
+//error_reporting(E_ALL);
+//ini_set('display_errors', 1);
+// Iniciar sesión al principio del script
+session_start();
+
+// Verificar archivos requeridos
+$required_files = [
+    'auth_functions.php',
+    'db_connection.php',
+    'admin_header.php'
+];
+foreach ($required_files as $file) {
+    if (!file_exists($file)) {
+        die("Error: Archivo requerido '$file' no encontrado.");
+    }
+}
+
+// Incluir archivos necesarios
+require_once 'auth_functions.php';
+require_once 'db_connection.php';
+
+// Verificar autenticación
+if (!is_logged_in()) {
+    header('Location: login.php');
+    exit;
+}
+
+function get_current_admin_user() {
+    global $pdo;
+    if (empty($_SESSION['user_id'])) {
+        return null;
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM security WHERE id = ?");
+        $stmt->execute([$_SESSION['user_id']]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error al obtener usuario: " . $e->getMessage());
+        return null;
+    }
+}
+
+// Obtener usuario actual (usando el nuevo nombre)
+$current_user = get_current_admin_user();
+
+// Verificar permisos
+if (!$current_user || $current_user['grants'] !== 'admin') {
+    http_response_code(403);
+    die("Acceso denegado: No tienes permisos suficientes");
+}
+
+// Inicializar variables
+$error_message = '';
+$success_message = $_SESSION['success_message'] ?? '';
+unset($_SESSION['success_message']);
+$users = [];
+$search_results = [];
+$search_message = '';
+
+// Procesar formulario POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // Validar inputs
+        $id = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT) ?? 0;
+        $username = trim(filter_input(INPUT_POST, 'username', FILTER_SANITIZE_STRING)) ?? '';
+        $password = $_POST['password'] ?? '';
+        $titleholder = strtoupper(trim(filter_input(INPUT_POST, 'titleholder', FILTER_SANITIZE_STRING))) ?? '';
+        $grants = in_array($_POST['grants'] ?? '', ['admin', 'editor', 'viewer']) ? $_POST['grants'] : 'viewer';
+        $status = in_array($_POST['status'] ?? '', ['active', 'inactive', 'suspended']) ? $_POST['status'] : 'active';
+
+        // Validaciones
+        if (empty($username) || empty($titleholder)) {
+            throw new Exception("Todos los campos son obligatorios");
+        }
+
+        // Operaciones con la base de datos
+        if ($id > 0) {
+            // Actualizar usuario
+            $params = [$username, $titleholder, $grants, $status, $id];
+            $sql = "UPDATE security SET username = ?, titleholder = ?, grants = ?, status = ? WHERE id = ?";
+            if (!empty($password)) {
+                $sql = "UPDATE security SET username = ?, password = ?, titleholder = ?, grants = ?, status = ? WHERE id = ?";
+                array_splice($params, 1, 0, password_hash($password, PASSWORD_DEFAULT));
+            }
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $message = "Usuario actualizado correctamente";
+        } else {
+            // Crear nuevo usuario
+            if (empty($password)) {
+                throw new Exception("La contraseña es obligatoria para nuevos usuarios");
+            }
+            $stmt = $pdo->prepare("INSERT INTO security (username, password, titleholder, grants, status, agent) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([
+                $username,
+                password_hash($password, PASSWORD_DEFAULT),
+                $titleholder,
+                $grants,
+                $status,
+                $current_user['username']
+            ]);
+            $message = "Usuario creado correctamente";
+        }
+        $_SESSION['success_message'] = $message;
+        header('Location: users.php');
+        exit;
+    } catch (Exception $e) {
+        $error_message = "Error: " . $e->getMessage();
+    }
+}
+
+// Procesar eliminación
+if (isset($_GET['delete'])) {
+    try {
+        $id = intval($_GET['delete']);
+        if ($id <= 0) {
+            throw new Exception("ID de usuario inválido");
+        }
+        if ($id === $current_user['id']) {
+            throw new Exception("No puedes eliminar tu propia cuenta");
+        }
+        $stmt = $pdo->prepare("DELETE FROM security WHERE id = ?");
+        $stmt->execute([$id]);
+        $_SESSION['success_message'] = "Usuario eliminado correctamente";
+        header('Location: users.php');
+        exit;
+    } catch (Exception $e) {
+        $error_message = "Error: " . $e->getMessage();
+    }
+}
+
+// Procesar búsqueda
+if (isset($_GET['search'])) {
+    try {
+        $search_term = '%' . trim($_GET['search']) . '%';
+        $stmt = $pdo->prepare("SELECT * FROM security WHERE username LIKE ? OR titleholder LIKE ? ORDER BY id");
+        $stmt->execute([$search_term, $search_term]);
+        $search_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($search_results)) {
+            $search_message = "No se encontraron resultados para '" . htmlspecialchars($_GET['search']) . "'";
+        }
+    } catch (PDOException $e) {
+        $error_message = "Error en la búsqueda: " . $e->getMessage();
+    }
+}
+
+// Obtener todos los usuarios
+try {
+    $stmt = $pdo->query("SELECT * FROM security ORDER BY id");
+    $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $error_message = "Error al cargar usuarios: " . $e->getMessage();
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Usuarios - Admin Gana Venezuela</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .admin-container {
+            width: 95%;
+            margin: 20px auto;
+            padding: 0;
+        }
+        .search-container {
+            display: flex;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .search-container input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #000f59;
+            border-radius: 4px 0 0 4px;
+        }
+        .search-container button {
+            padding: 10px 20px;
+            background-color: #000f59;
+            color: white;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .data-container {
+            background-color: #f0f0f0;
+            color: black;
+            width: 100%;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .table-container {
+            overflow-x: auto;
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #000f59;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            width: 100%;
+            display: block;
+            text-align: center;
+        }
+        .edit-btn {
+            background-color: #ff6f00;
+            color: white;
+        }
+        .delete-btn {
+            background-color: #cd1313;
+            color: white;
+        }
+        .add-btn {
+            background-color: #118611;
+            color: white;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .status-active {
+            color: #118611;
+            font-weight: bold;
+        }
+        .status-inactive {
+            color: #cd1313;
+            font-weight: bold;
+        }
+        .status-suspended {
+            color: #ff6f00;
+            font-weight: bold;
+        }
+        .grants-admin {
+            color: #000f59;
+            font-weight: bold;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            width: 95%;
+            max-width: 500px;
+        }
+        .modal-content h2 {
+            color: black;
+            margin-top: 0;
+        }
+        .modal-content label {
+            color: black;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .modal-content input,
+        .modal-content select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-buttons button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 100px;
+            flex: 1;
+            max-width: 120px;
+        }
+        .save-btn {
+            background-color: #118611;
+            color: white;
+        }
+        .close-btn {
+            background-color: #000f59;
+            color: white;
+        }
+        .search-message {
+            text-align: center;
+            padding: 10px;
+            background-color: #ffeb3b;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <?php include 'admin_header.php'; ?>
+    <div class="admin-container">
+        <div class="data-container">
+            <button class="add-btn" onclick="openUserModal(0)">Agregar Usuario</button>
+            <form method="GET" class="search-container">
+                <input type="text" name="search" placeholder="Buscar por usuario o nombre..." value="<?php echo isset($_GET['search']) ? htmlspecialchars($_GET['search']) : ''; ?>">
+                <button type="submit">Buscar</button>
+            </form>
+            <?php if (isset($search_message)): ?>
+                <div class="search-message"><?php echo $search_message; ?></div>
+            <?php endif; ?>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Usuario</th>
+                            <th>Titular</th>
+                            <th>Permisos</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php 
+                        $users_to_display = isset($_GET['search']) ? $search_results : $users;
+                        foreach ($users_to_display as $user): 
+                        ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($user['username']); ?></td>
+                            <td><?php echo htmlspecialchars($user['titleholder']); ?></td>
+                            <td class="grants-<?php echo $user['grants']; ?>"><?php echo ucfirst($user['grants']); ?></td>
+                            <td class="status-<?php echo $user['status']; ?>"><?php echo ucfirst($user['status']); ?></td>
+                            <td>
+                                <button class="action-btn edit-btn" onclick="openUserModal(<?php echo $user['id']; ?>)">Editar</button>
+                                <?php if ($user['id'] !== $current_user['id']): ?>
+                                    <button class="action-btn delete-btn" onclick="confirmDelete(<?php echo $user['id']; ?>)">Eliminar</button>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <!-- Modal para edición/creación de usuarios -->
+<div id="userModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h2 id="modalTitle">Nuevo Usuario</h2>
+        <form id="userForm" method="POST">
+            <input type="hidden" id="userId" name="id" value="0">
+            <div class="form-group">
+                <label for="username">Usuario:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Contraseña:</label>
+                <input type="password" id="password" name="password">
+                <small>(Dejar en blanco para no cambiar)</small>
+            </div>
+            <div class="form-group">
+                <label for="titleholder">Nombre Completo:</label>
+                <input type="text" id="titleholder" name="titleholder" required>
+            </div>
+            <div class="form-group">
+                <label for="grants">Permisos:</label>
+                <select id="grants" name="grants" required>
+                    <option value="admin">Administrador</option>
+                    <option value="editor">Editor</option>
+                    <option value="viewer" selected>Visualizador</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="status">Estado:</label>
+                <select id="status" name="status" required>
+                    <option value="active" selected>Activo</option>
+                    <option value="inactive">Inactivo</option>
+                    <option value="suspended">Suspendido</option>
+                </select>
+            </div>
+            <!-- Modal de usuario -->
+<div class="modal-buttons">
+    <button type="submit" class="save-btn" style="width: 48%;">Guardar</button>
+    <button type="button" class="close-btn" onclick="closeModal()" style="width: 48%;">Cerrar</button>
+</div>
+        </form>
+    </div>
+</div>
+    <script>
+        function openUserModal(id) {
+            const modal = document.getElementById('userModal');
+            const form = document.getElementById('userForm');
+            // Resetear el modal
+            form.reset();
+            modal.style.display = 'flex';
+            document.getElementById('modalTitle').textContent = id > 0 ? 'Cargando...' : 'Nuevo Usuario';
+            if (id > 0) {
+                fetch(`get_user.php?id=${id}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(err => { 
+                                throw new Error(err.error || `Error ${response.status}`); 
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (!data || !data.success) {
+                            throw new Error(data?.error || 'Respuesta inválida del servidor');
+                        }
+                        // Llenar el formulario
+                        document.getElementById('modalTitle').textContent = 'Editar Usuario';
+                        document.getElementById('userId').value = data.data.id;
+                        document.getElementById('username').value = data.data.username;
+                        document.getElementById('titleholder').value = data.data.titleholder || '';
+                        document.getElementById('grants').value = data.data.grants;
+                        document.getElementById('status').value = data.data.status;
+                        // Configurar campo de contraseña
+                        const passField = document.getElementById('password');
+                        passField.placeholder = "Nueva contraseña (opcional)";
+                        passField.required = false;
+                        passField.value = '';
+                    })
+                    .catch(error => {
+                        console.error('Error al cargar usuario:', error);
+                        alert(error.message);
+                        closeModal();
+                    });
+            } else {
+                // Configurar para nuevo usuario
+                document.getElementById('userId').value = '0';
+                const passField = document.getElementById('password');
+                passField.placeholder = "Contraseña (requerida)";
+                passField.required = true;
+            }
+        }
+        function confirmDelete(id) {
+            if (confirm('¿Estás seguro de eliminar este usuario?')) {
+                window.location.href = `users.php?delete=${id}`;
+            }
+        }
+        function closeModal() {
+            document.getElementById('userModal').style.display = 'none';
+        }
+        // Cerrar modal al hacer clic fuera del contenido
+        window.onclick = function(event) {
+            const modal = document.getElementById('userModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        };
+    </script>
+</body>
+</html>
+
+/* ----- Archivo CSS: modal.css ----- */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.75);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background-color: #f0f0f0;
+    padding: 20px;
+    border-radius: 5px;
+    width: 95%;
+    max-width: 500px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    position: relative;
+    color: #000;
+}
+
+.close {
+    color: #000;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 15px;
+}
+
+.close:hover {
+    color: #cd1313;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #000;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #000f59;
+    border-radius: 4px;
+    box-sizing: border-box;
+    color: #000;
+}
+
+.form-group textarea {
+    min-height: 100px;
+}
+
+.form-group input[type="file"] {
+    padding: 3px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: space-between;
+    gap: 4%; /* Espacio entre botones */
+    margin-top: 20px;
+    width: 100%;
+}
+
+.modal-buttons button {
+    padding: 8px 0; /* Ajuste vertical */
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    flex-grow: 1;
+    text-align: center;
+}
+
+/* Estilos específicos para diferentes cantidades de botones */
+.modal-buttons button:only-child {
+    width: 100%;
+}
+
+.modal-buttons button:nth-child(1):nth-last-child(2),
+.modal-buttons button:nth-child(2):nth-last-child(1) {
+    width: 48%;
+}
+
+.modal-buttons button:nth-child(1):nth-last-child(3),
+.modal-buttons button:nth-child(2):nth-last-child(2),
+.modal-buttons button:nth-child(3):nth-last-child(1) {
+    width: 30%;
+}
+
+.save-btn {
+    background-color: #118611;
+    color: white;
+}
+
+.edit-btn {
+    background-color: #ff6f00;
+    color: white;
+}
+
+.delete-btn {
+    background-color: #cd1313;
+    color: white;
+}
+
+.close-btn {
+    background-color: #000f59;
+    color: white;
+}
+
+.complete-btn {
+    background-color: #28a745;
+    color: white;
+}
+
+.cancel-btn {
+    background-color: #dc3545;
+    color: white;
+}
+
+.view-btn {
+    background-color: #17a2b8;
+    color: white;
+}
+
+/* ----- Archivo CSS: styles.css ----- */
+@charset "utf-8";
+/* CSS Document */
+
+/* Cargar la fuente personalizada */
+@font-face {
+    font-family: 'Forgotten';
+    src: url('fonts/forgotten.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* Reset básico */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #000f59;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+    margin: 0;
+}
+
+/* Estilo del Modal Menu */
+.modal-menu {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 20px;
+    background-color: #000f59;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    border-radius: 0;
+}
+
+.logo img {
+    width: 100px;
+    height: 55px;
+}
+
+.menu-options {
+    display: flex;
+    gap: 20px;
+}
+
+.option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    color: white;
+}
+
+.option .icon {
+    font-size: 24px;
+    filter: brightness(0) invert(1);
+}
+
+.option .label {
+    font-size: 14px;
+    margin-top: 5px;
+	text-align:center
+}
+
+.menu-options a {
+    text-decoration: none;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.menu-options a:hover {
+    color: #ffcc00;
+}
+
+/* Contenido Principal */
+.content {
+    width: 90%;
+    max-width: 1200px;
+    margin: 100px auto 20px;
+}
+
+.welcome-message {
+    margin-top: 10px;
+    text-align: center;
+}
+
+.info-container {
+    background-color: #f0f0f0;
+    color: black;
+    padding: 20px;
+    border-radius: 5px;
+    text-align: center;
+}
+
+/* Contenedor de cada rifa */
+.rifa-container {
+    width: 99%;
+    margin: 0 auto 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background-color: #CCC;
+    padding: 20px;
+    border-radius: 5px;
+}
+
+.rifa-title h2 {
+    font-size: 1.8rem;
+    margin-bottom: 10px;
+    color: #000f59;
+}
+
+.rifa-info p {
+    font-size: 1rem;
+    margin-bottom: 10px;
+}
+
+.rifa-date p {
+    font-size: 1rem;
+    margin-bottom: 10px;
+}
+
+.rifa-price h1 {
+    font-size: 2.5rem;
+    color: #000f59;
+    margin: 10px 0;
+}
+
+/* Barra de progreso */
+.progress-container {
+    width: 100%;
+    margin: 10px 0;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+    color: #333;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 30px;
+    background: repeating-linear-gradient(
+        45deg,
+        #f0f0f0,
+        #f0f0f0 10px,
+        #e0e0e0 10px,
+        #e0e0e0 20px
+    );
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    position: relative;
+    background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 10px,
+        rgba(255, 255, 255, 0.2) 10px,
+        rgba(255, 255, 255, 0.2) 20px
+    );
+}
+
+/* Colores dinámicos (se aplican mediante JavaScript) */
+.progress-fill::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        to right,
+        #118611,
+        #8bc34a,
+        #ffc107,
+        #ff6f00,
+        #cd1313
+    );
+    background-size: 100% 100%;
+    z-index: -1;
+}
+
+.rifa-button {
+    margin-top: 10px;
+}
+
+.buy-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #ff6f00;
+    color: #000f59;
+
+}
+
+.buy-button:hover {
+    background-color: #e65c00;
+}
+
+
+
+/* Mensaje cuando no hay rifas */
+.no-raffles-message {
+    padding: 30px;
+    background-color: #fff;
+    border-radius: 5px;
+    color: #000f59;
+    font-size: 1.2rem;
+    margin: 20px 0;
+}
+
+.no-raffles-message p {
+    margin-bottom: 10px;
+}
+
+/* Selector de números */
+.number-selector {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.number-selector select {
+    width: 60px;
+    height: 60px;
+    font-size: 100px;
+    text-align: center;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: white;
+    cursor: pointer;
+}
+
+.number-selector select:focus {
+    outline: none;
+    border-color: #ff6f00;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Campos de formulario */
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #ff6f00;
+    outline: none;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Modal de confirmación */
+.confirmation-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.35);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.confirmation-content {
+    background-color: #f0f0f0;
+    width: 90%;
+    max-width: 500px;
+    padding: 20px;
+    border-radius: 10px;
+    color: #000;
+    text-align: center;
+}
+
+.confirmation-content h3 {
+    color: #000f59;
+    margin-bottom: 15px;
+}
+
+.confirmation-content p {
+    margin: 8px 0;
+    text-align: left;
+}
+
+.confirmation-content p strong {
+    color: #000f59;
+}
+
+.confirmation-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+
+    
+    .confirmation-buttons {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .confirmation-buttons button {
+        width: 100%;
+    }
+}
+
+
+/* Campos de formulario */
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #ff6f00;
+    outline: none;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Botones */
+.button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+.button-wrapper {
+    flex: 1;
+    margin: 0 5px;
+}
+
+.button-wrapper.left-button {
+    text-align: left;
+
+}
+
+.button-wrapper.right-button {
+    text-align: right;
+
+}
+
+.back-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #000f59;
+    color: white;
+}
+
+.back-button:hover {
+    background-color: #000c4a;
+}
+
+.buy-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #ff6f00;
+    color: #000f59;
+}
+
+.buy-button:hover {
+    background-color: #e65c00;
+}
+
+/* Modal de confirmación */
+
+
+
+
+/* Modal para número ocupado */
+.taken-number-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.35);
+    z-index: 2000;
+    justify-content: center;
+    align-items: center;
+}
+
+.taken-number-content {
+    background-color: #f0f0f0;
+    width: 90%;
+    max-width: 400px;
+    padding: 20px;
+    border-radius: 10px;
+    color: #000;
+    text-align: center;
+}
+
+.taken-number-content h3 {
+    color: #cd1313;
+    margin-bottom: 15px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+
+    
+    .confirmation-buttons,
+    .button-container {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .confirmation-buttons button,
+    .button-wrapper button {
+        width: 100%;
+    }
+    
+    .button-wrapper.left-button,
+    .button-wrapper.right-button {
+        text-align: center;
+    }
+}
+
+/* ----- Estructura de la Base de Datos ----- */
+/* ----- Tabla: buy ----- */
+CREATE TABLE `buy` (
+  `id` int(6) unsigned zerofill NOT NULL AUTO_INCREMENT,
+  `date` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `status` enum('pending','completed','cancelled') DEFAULT 'pending',
+  `raffle` int NOT NULL,
+  `cid` varchar(20) NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `phone` varchar(20) NOT NULL,
+  `agent` varchar(255) NOT NULL,
+  `number` varchar(255) DEFAULT NULL,
+  `capture` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `raffle` (`raffle`),
+  CONSTRAINT `buy_ibfk_1` FOREIGN KEY (`raffle`) REFERENCES `raffles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=772 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+/* ----- Tabla: features ----- */
+CREATE TABLE `features` (
+  `id` int(10) unsigned zerofill NOT NULL AUTO_INCREMENT,
+  `status` varchar(10) DEFAULT NULL,
+  `rate` decimal(10,2) DEFAULT NULL,
+  `session_whatsapp` varchar(255) DEFAULT NULL,
+  `session_phone` varchar(255) DEFAULT NULL,
+  `bank` varchar(255) DEFAULT NULL,
+  `cid` varchar(255) DEFAULT NULL,
+  `phone` varchar(255) DEFAULT NULL,
+  `paypal` varchar(255) DEFAULT NULL,
+  `paypal_titleholder` varchar(255) DEFAULT NULL,
+  `zelle` varchar(255) DEFAULT NULL,
+  `zelle_titleholder` varchar(255) DEFAULT NULL,
+  `zinli` varchar(255) DEFAULT NULL,
+  `zinli_titleholder` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `yape` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `yape_titleholder` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+/* ----- Tabla: messages ----- */
+CREATE TABLE `messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `date` varchar(255) DEFAULT NULL,
+  `session` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `phone` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `msg` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+/* ----- Tabla: raffles ----- */
+CREATE TABLE `raffles` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `date` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `status` enum('active','inactive','completed') DEFAULT 'active',
+  `r_title` varchar(255) NOT NULL,
+  `r_description` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `r_description_image` varchar(255) DEFAULT NULL,
+  `r_date` datetime NOT NULL,
+  `r_price` decimal(10,2) NOT NULL,
+  `agent` varchar(255) NOT NULL,
+  `begin` decimal(4,0) unsigned zerofill DEFAULT NULL,
+  `final` decimal(4,0) unsigned zerofill DEFAULT NULL,
+  `sold` decimal(4,0) unsigned zerofill DEFAULT NULL,
+  `winners` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+/* ----- Tabla: security ----- */
+CREATE TABLE `security` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `date` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `status` enum('active','inactive','suspended') DEFAULT 'active',
+  `username` varchar(255) NOT NULL,
+  `password` varchar(255) NOT NULL,
+  `titleholder` varchar(255) DEFAULT NULL,
+  `grants` enum('admin','editor','viewer') DEFAULT 'viewer',
+  `agent` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username` (`username`)
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+/* ----- Tabla: visitors ----- */
+CREATE TABLE `visitors` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `date` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `ipaddress` varchar(45) NOT NULL,
+  `host` varchar(255) DEFAULT NULL,
+  `country` varchar(100) DEFAULT NULL,
+  `info` text,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
