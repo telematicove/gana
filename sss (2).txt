@@ -1,0 +1,2321 @@
+/* ----- Archivo php: buy.php ----- */
+<?php
+// Configuración de la conexión a la base de datos
+$host = "localhost";
+$dbname = "ganavenezuela.com";
+$username = "root";
+$password = "Cable0414++";
+try {
+    // Crear conexión PDO con charset UTF-8
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec("SET NAMES 'utf8mb4'");
+    $pdo->exec("SET CHARACTER SET utf8mb4");
+    // Obtener la tasa de cambio y datos de WhatsApp
+    $features_query = "SELECT rate, session_whatsapp, session_phone, cid, bank, phone as admin_phone, 
+                              paypal, paypal_titleholder, zelle, zelle_titleholder, zinli, zinli_titleholder,
+                              yape, yape_titleholder 
+                       FROM features LIMIT 1";
+    $features_stmt = $pdo->query($features_query);
+    $features = $features_stmt->fetch(PDO::FETCH_ASSOC);
+    $exchange_rate = $features['rate'] ?? 1;
+    $session_whatsapp = $features['session_whatsapp'] ?? '';
+    $admin_phone = $features['session_phone'] ?? '';
+    $bank = $features['bank'] ?? '';
+    $admin_contact_phone = $features['admin_phone'] ?? '';
+    $admin_cid = $features['cid'] ?? '';
+    $paypal = $features['paypal'] ?? '';
+    $paypal_titleholder = $features['paypal_titleholder'] ?? '';
+    $zelle = $features['zelle'] ?? '';
+    $zelle_titleholder = $features['zelle_titleholder'] ?? '';
+    $zinli = $features['zinli'] ?? '';
+    $zinli_titleholder = $features['zinli_titleholder'] ?? '';
+    $yape = $features['yape'] ?? ''; // Nuevo campo para Yape
+    $yape_titleholder = $features['yape_titleholder'] ?? ''; // Nuevo campo para el titular de Yape
+    // Obtener el ID del sorteo desde la URL
+    $raffle_id = isset($_GET['raffle']) ? intval($_GET['raffle']) : 0;
+    $quantity = isset($_GET['quantity']) ? intval($_GET['quantity']) : 1;
+    if ($raffle_id > 0) {
+        // Consulta SQL para obtener los detalles del sorteo (ahora incluyendo r_description_image)
+        $query = "SELECT id, r_title, r_description, r_description_image, r_date, r_price, begin, final, sold, premium FROM raffles WHERE id = :id AND status = 'active'";
+        $stmt = $pdo->prepare($query);
+        $stmt->bindParam(':id', $raffle_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $raffle = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$raffle) {
+            die("<script>alert('El sorteo seleccionado no está disponible.'); window.location.href='/';</script>");
+        }
+        // Asegurar que begin y final tengan 4 dígitos
+        $raffle['begin'] = str_pad($raffle['begin'], 4, '0', STR_PAD_LEFT);
+        $raffle['final'] = str_pad($raffle['final'], 4, '0', STR_PAD_LEFT);
+        // Calcular precio en bolívares
+        $raffle['r_price_bs'] = number_format($raffle['r_price'] * $exchange_rate, 2, ',', '.');
+        // Calcular total en bolívares para success
+        $total_usd = $raffle['r_price'] * $quantity;
+        $total_bs = $total_usd * $exchange_rate;
+    } else {
+        die("<script>alert('ID de sorteo inválido.'); window.location.href='/';</script>");
+    }
+    // Procesar el formulario si se envió (POST)
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        // Recoger los datos del formulario y convertirlos a mayúsculas
+        $name = mb_strtoupper(trim($_POST['name']), 'UTF-8');
+        $cid = mb_strtoupper(trim($_POST['id']), 'UTF-8');
+        $country = mb_strtoupper(trim($_POST['country']), 'UTF-8');
+        ////
+        $raw_phone = trim($_POST['phone']);
+        // Eliminar el signo "+" si lo tiene al inicio
+        if (strpos($raw_phone, '+') === 0) {
+            $raw_phone = substr($raw_phone, 1);
+        }
+        // Eliminar cualquier carácter que no sea número por seguridad
+        $raw_phone = preg_replace('/\D/', '', $raw_phone);
+        $quantity = intval($_POST['quantity']);
+        $terms_accepted = isset($_POST['terms']) && $_POST['terms'] === 'on';
+        // Validar que aceptó los términos
+        if (!$terms_accepted) {
+            die("<script>alert('Debe aceptar los términos y condiciones para continuar.'); window.history.back();</script>");
+        }
+        // Validar la cantidad de tickets
+        if ($quantity < 2 || $quantity > 100) {
+            die("<script>alert('La cantidad de tickets debe estar entre 2 y 100.'); window.history.back();</script>");
+        }
+        // Validar los demás datos
+        if (empty($name) || empty($cid) || empty($country) || empty($raw_phone)) {
+            die("<script>alert('Por favor, completa todos los campos.'); window.history.back();</script>");
+        }
+        /// Procesar la imagen subida
+        $capture_path = '';
+        if (isset($_FILES['capture']) && $_FILES['capture']['error'] === UPLOAD_ERR_OK) {
+            $upload_dir = 'admin/uploads/';
+            $db_upload_dir = 'uploads/'; // Directorio relativo para la base de datos
+            // Crear el directorio si no existe
+            if (!file_exists($upload_dir)) {
+                mkdir($upload_dir, 0777, true); // Crea el directorio con permisos 0777
+            }
+            // Obtener la extensión del archivo
+            $file_ext = pathinfo($_FILES['capture']['name'], PATHINFO_EXTENSION);
+            // Generar un nombre único para el archivo
+            $file_name = 'sorteo_' . $raffle_id . '_' . $cid . '_' . date('YmdHis') . '.' . $file_ext;
+            // Construir la ruta completa del archivo para el sistema de archivos
+            $target_file = $upload_dir . $file_name; // Ruta física donde se guardará el archivo
+            // Construir la ruta relativa para almacenar en la base de datos
+            $db_file_path = $db_upload_dir . $file_name; // Ruta relativa para almacenar en la base de datos
+            // Mover el archivo subido al directorio especificado
+            if (move_uploaded_file($_FILES['capture']['tmp_name'], $target_file)) {
+                $capture_path = $db_file_path; // Guardar la ruta relativa para la base de datos
+            } else {
+                die("<script>alert('Error al subir el comprobante. Verifica los permisos del directorio.'); window.history.back();</script>");
+            }
+        } else {
+            die("<script>alert('Por favor, suba un comprobante de pago.'); window.history.back();</script>");
+        }
+        // Función para formatear números de teléfono venezolanos
+        function formatVenezuelanPhone($phone) {
+            // Eliminar cualquier carácter que no sea dígito
+            $phone = preg_replace('/[^0-9]/', '', $phone);
+            // Si comienza con 0, eliminar el 0
+            if (substr($phone, 0, 1) === '0') {
+                $phone = substr($phone, 1);
+            }
+            // Prefijos de operadoras venezolanas
+            $venezuelanPrefixes = ['414', '416', '424', '426', '412', '422'];
+            // Verificar si el número tiene un prefijo venezolano (primeros 3 dígitos)
+            $prefix = substr($phone, 0, 3);
+            if (in_array($prefix, $venezuelanPrefixes)) {
+                // Formatear a formato internacional (58 + número sin 0)
+                return '58' . $phone;
+            }
+            // Si no es un prefijo venezolano, devolver el número original
+            return $phone;
+        }
+        // Formatear el número de teléfono
+        $phone = formatVenezuelanPhone($raw_phone);
+        // Obtener TODOS los números ya comprados para este sorteo con status pending o completed
+        $taken_numbers = [];
+        $check_query = "SELECT number FROM buy WHERE raffle = :raffle AND status IN ('pending', 'completed')";
+        $check_stmt = $pdo->prepare($check_query);
+        $check_stmt->bindParam(':raffle', $raffle_id, PDO::PARAM_INT);
+        $check_stmt->execute();
+        while ($row = $check_stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (!empty($row['number'])) {
+                // Dividir la cadena de números y agregar cada uno al array
+                $numbers = explode(',', $row['number']);
+                foreach ($numbers as $num) {
+                    $num = trim($num);
+                    if (!empty($num)) {
+                        $taken_numbers[] = $num;
+                    }
+                }
+            }
+        }
+		
+        // Generar números aleatorios únicos
+        $available_numbers = [];
+        $begin_int = intval($raffle['begin']);
+        $final_int = intval($raffle['final']);
+        // Crear array de todos los números posibles (en formato 4 dígitos)
+        $all_numbers = range($begin_int, $final_int);
+        $all_numbers = array_map(function($num) {
+            return str_pad($num, 4, '0', STR_PAD_LEFT);
+        }, $all_numbers);
+        // Filtrar los números ya tomados
+        $available_numbers = array_diff($all_numbers, $taken_numbers);
+        // Verificar si hay suficientes números disponibles
+        if (count($available_numbers) < $quantity) {
+            die("<script>alert('No hay suficientes números disponibles. Solo quedan " . count($available_numbers) . " números.'); window.history.back();</script>");
+        }
+        // Seleccionar aleatoriamente la cantidad solicitada
+        shuffle($available_numbers);
+        $selected_numbers = array_slice($available_numbers, 0, $quantity);
+        // Contar la cantidad real de números asignados
+        $numbers_assigned = count($selected_numbers);
+        // Formatear los números seleccionados como cadena separada por comas
+        $numbers_str = implode(',', $selected_numbers);
+        // Insertar los datos en la tabla buy (un solo registro con todos los números)
+        try {
+            $pdo->beginTransaction();
+            $insert_query = "INSERT INTO buy (date, status, raffle, cid, name, phone, agent, number, capture) 
+                            VALUES (:date, :status, :raffle, :cid, :name, :phone, :agent, :number, :capture)";
+            $insert_stmt = $pdo->prepare($insert_query);
+            $insert_stmt->bindParam(':date', date('Y-m-d H:i:s'), PDO::PARAM_STR);
+            $insert_stmt->bindValue(':status', 'pending', PDO::PARAM_STR);
+            $insert_stmt->bindParam(':raffle', $raffle_id, PDO::PARAM_INT);
+            $insert_stmt->bindParam(':cid', $cid, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':name', $name, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':phone', $phone, PDO::PARAM_STR);
+            $insert_stmt->bindValue(':agent', 'web', PDO::PARAM_STR);
+            $insert_stmt->bindParam(':number', $numbers_str, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':capture', $capture_path, PDO::PARAM_STR);
+            $insert_stmt->execute();
+            // Actualizar el contador de boletos vendidos
+            $update_query = "UPDATE raffles SET sold = sold + :numbers_assigned WHERE id = :id";
+            $update_stmt = $pdo->prepare($update_query);
+            $update_stmt->bindParam(':numbers_assigned', $numbers_assigned, PDO::PARAM_INT); // Usar la cantidad real de números asignados
+            $update_stmt->bindParam(':id', $raffle_id, PDO::PARAM_INT);
+            $update_stmt->execute();
+            $pdo->commit();
+			
+			////////////
+			// === INICIO - Llamada GET a search_customer.php ===
+			try {
+				// Datos del cliente desde POST
+				$customer_cid = trim($_POST['id']);
+				$customer_name = mb_strtoupper(trim($_POST['name']), 'UTF-8');
+				$customer_phone = trim($_POST['phone']);
+			
+				// Preparar parámetros para GET
+				$url = "https://ganavenezuela.com/search_customer.php?" . http_build_query([
+					'cmd' => 'add',
+					'cid' => $customer_cid,
+					'name' => $customer_name,
+					'phone' => $customer_phone
+				]);
+			
+				// Hacer llamada GET silenciosa
+				file_get_contents($url);
+			
+			} catch (Exception $e) {
+				error_log("Error al llamar a search_customer.php: " . $e->getMessage());
+			}
+			// === FIN - Llamada GET ===
+			////////////
+						
+            // Calcular totales
+            $total = $quantity * $raffle['r_price'];
+            $totalBs = $total * $exchange_rate;
+            // Función para limpiar y preparar texto para WhatsApp
+            function prepareWhatsAppText($text) {
+                // Convertir a UTF-8 y mantener caracteres especiales
+                $text = mb_convert_encoding($text, 'UTF-8', 'auto');
+                // Escapar solo los caracteres problemáticos
+                $text = str_replace(
+                    ['á', 'é', 'í', 'ó', 'ú', 'Á', 'É', 'Í', 'Ó', 'Ú', 'ñ', 'Ñ', '¿', '¡'],
+                    ['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U', 'n', 'N', '', ''],
+                    $text
+                );
+                return $text;
+            }
+			
+			// Buscar si hay números premium en esta compra
+			$premium_numbers = [];
+			if (!empty($raffle['premium'])) {
+				$premium_list = explode(',', $raffle['premium']);
+				$premium_list = array_map('trim', $premium_list); // Limpiar espacios
+			
+				$generated_numbers = explode(',', $numbers_str);
+				$generated_numbers = array_map('trim', $generated_numbers);
+			
+				foreach ($generated_numbers as $num) {
+					if (in_array($num, $premium_list)) {
+						$premium_numbers[] = $num;
+					}
+				}
+			}
+
+            // Enviar mensaje al jugador
+            $player_msg = prepareWhatsAppText("
+			
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+Sr(a). *$name*, se ha registrado *$quantity* ticket(s) en nuestro sistema:
+
+-------
+Sorteo: *{$raffle['r_title']}*
+Fecha: *{$raffle['r_date']}*
+Monto: *Bs. ".number_format($totalBs, 2)."*
+-------
+
+Recibirá un mensaje de confirmación una vez validado su pago dentro de 24-72 horas.
+
+Síguenos en nuestras Redes Sociales:
+
+*Instagram:* @ganavenezuelaoficial
+*WhatsApp:* https://whatsapp.com/channel/0029VbAsT6DGJP8CrOH64b01 
+
+*GUARDE ESTE NÚMERO COMO CONTACTO*
+
+*Gracias por su Compra...!*
+            ");
+            // Enviar mensaje al administrador
+            $admin_msg = prepareWhatsAppText("
+			
+*GANA VENEZUELA*
+_Sistema Comercial_
+
+COMPRA WEB
+
+----------------
+*Cliente:* $name
+*C.I.:* $cid
+*Teléfono:* $raw_phone
+----------------
+*Sorteo:* {$raffle['r_title']}
+*Números:* $numbers_str (NO SE MUESTRA AL CLIENTE)
+*Cantidad:* $quantity
+*Monto: *Bs. ".number_format($totalBs, 2)."
+----------------
+*Fecha:* ".date('Y-m-d H:i:s')."
+
+" . (!empty($premium_numbers) ? "*No. Premium:* " . implode(', ', $premium_numbers) : "*No. Premium:* No aplica") . "
+
+
+Acceder: *https://admin.ganavenezuela.com* 
+            ");
+            // Función para enviar mensajes por WhatsApp
+            function sendWhatsAppMessage($phone, $message, $sessionId) {
+                $phoneEncoded = rawurlencode($phone);
+                // Codificar el mensaje manteniendo los caracteres especiales
+                $message = mb_convert_encoding($message, 'UTF-8', 'auto');
+                $msgEncoded = rawurlencode($message);
+                $url = "https://api.telematico.work/send?number=".$phoneEncoded."&message=".$msgEncoded."&sessionId=".$sessionId;
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL, $url);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                $response = curl_exec($ch);
+                curl_close($ch);
+                return $response;
+            }
+            // Enviar mensajes
+            sendWhatsAppMessage($phone, $player_msg, $session_whatsapp);
+            sendWhatsAppMessage($admin_phone, $admin_msg, $session_whatsapp);
+            // Redirigir a success.php
+            header("Location: success.php?raffle=" . $raffle_id . "&quantity=" . $quantity);
+            exit;
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            // Eliminar la imagen subida si hubo error
+            if (!empty($capture_path) && file_exists($capture_path)) {
+                unlink($capture_path);
+            }
+            die("<script>alert('Error al registrar la compra: " . addslashes($e->getMessage()) . "'); window.history.back();</script>");
+        }
+    }
+} catch (PDOException $e) {
+    die("<script>alert('Error al conectar con la base de datos: " . addslashes($e->getMessage()) . "'); window.location.href='/';</script>");
+}
+?>
+<?php
+// Configuración de la conexión a la base de datos (usando las mismas credenciales)
+$host = "localhost";
+$dbname = "ganavenezuela.com";
+$username = "root";
+$password = "Cable0414++";
+try {
+    // Crear conexión PDO
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    // Función para obtener información geográfica de la IP
+    function getIpInfo($ip) {
+        $url = "http://ip-api.com/json/{$ip}?fields=status,message,country,query,hostname";
+        $response = @file_get_contents($url);
+        if ($response === false) {
+            return null;
+        }
+        $data = json_decode($response, true);
+        if ($data['status'] !== 'success') {
+            return null;
+        }
+        return $data;
+    }
+    // Obtener información del visitante
+    $ipaddress = $_SERVER['REMOTE_ADDR'];
+    $host = gethostbyaddr($ipaddress);
+    $ipInfo = getIpInfo($ipaddress);
+    $country = $ipInfo['country'] ?? 'Desconocido';
+    $info = json_encode([
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'referer' => $_SERVER['HTTP_REFERER'] ?? '',
+        'ip_info' => $ipInfo
+    ]);
+    // Insertar registro en la base de datos
+    $query = "INSERT INTO visitors 
+              (ipaddress, host, country, info) 
+              VALUES 
+              (:ipaddress, :host, :country, :info)";
+    $stmt = $pdo->prepare($query);
+    $stmt->bindParam(':ipaddress', $ipaddress, PDO::PARAM_STR);
+    $stmt->bindParam(':host', $host, PDO::PARAM_STR);
+    $stmt->bindParam(':country', $country, PDO::PARAM_STR);
+    $stmt->bindParam(':info', $info, PDO::PARAM_STR);
+    $stmt->execute();
+} catch (PDOException $e) {
+    // Opcional: puedes registrar el error en un archivo de log
+    error_log("Error al registrar acceso: " . $e->getMessage());
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compra en Línea - Gana Venezuela</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+        }
+        .confirmation-buttons {
+            display: flex;
+            justify-content: space-between;
+        }
+        .taken-number-modal .confirmation-buttons {
+            display: flex;
+            justify-content: center;
+        }
+        .number-selector select {
+            width: 23%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #000f59; 
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .number-selector select:disabled {
+            background-color: #f0f0f0;
+        }
+        .quantity-selector {
+            margin: 15px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+        }
+        .quantity-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        .quantity-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 5px;
+            border: none;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .quantity-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .decrease-btn {
+            background-color: #ff4444;
+            color: white;
+        }
+        .increase-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .quantity-value {
+            font-size: 24px;
+            font-weight: bold;
+            width: 100px;
+            height: 50px;
+            text-align: center;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ddd;
+        }
+        .quick-add-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            justify-content: center;
+        }
+        .quick-add-btn {
+            padding: 10px 15px;
+            background-color: #000f59;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 60px;
+        }
+        .quick-add-btn:hover {
+            background-color: #001a8c;
+        }
+        .amount-display {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .confirmation-numbers {
+            max-height: 200px;
+            overflow-y: auto;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .file-upload-button {
+            display: inline-block;
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: center;
+            width: 90%;
+        }
+        .file-upload-button:hover {
+            background-color: #001a8c;
+        }
+        #capture {
+            display: none;
+        }
+        .file-upload-text {
+            margin-top: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        .min-quantity-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1001;
+            justify-content: center;
+            align-items: center;
+        }
+        .min-quantity-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            text-align: center;
+            max-width: 300px;
+        }
+        .payment-section {
+            margin-top: 10px;
+            width: 100%;
+        }
+        .payment-method {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            width: 100%;
+            margin:auto;
+        }
+        .payment-method h3 {
+            color: #000f59;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .payment-details {
+            margin: 15px 0;
+        }
+        .payment-details p {
+            margin: 8px 0;
+        }
+        .payment-instructions {
+            margin-top: 15px;
+            padding: 12px;
+            background-color: #e8f4f8;
+            border-radius: 5px;
+            border-left: 4px solid #000f59;
+        }
+        .payment-instructions p {
+            margin: 5px 0;
+        }
+        .highlight {
+            font-weight: bold;
+            color: #000f59;
+        }
+        .terms-checkbox {
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+        }
+        .terms-checkbox input {
+            margin-right: 10px;
+        }
+        .terms-link {
+            color: #000f59;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        .terms-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1001;
+            justify-content: center;
+            align-items: center;
+        }
+        .terms-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            color:#333;
+            text-align: justify;
+        }
+        .terms-content h3 {
+            color: #000f59;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        .terms-content ol {
+            padding-left: 20px;
+        }
+        .terms-content li {
+            margin-bottom: 10px;
+        }
+        .close-terms {
+            display: block;
+            margin-top: 15px;
+            text-align: center;
+        }
+        /* Estilos para el botón de copiar datos */
+        .copy-data-btn {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .copy-data-btn:hover {
+            background-color: #45a049;
+        }
+        /* Estilos para el modal de imagen */
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            z-index: 1002;
+            justify-content: center;
+            align-items: center;
+        }
+        .image-modal-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .image-modal-content img {
+            max-width: 100%;
+            max-height: 90vh;
+            display: block;
+            margin: 0 auto;
+        }
+        .close-image-modal {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            color: white;
+            font-size: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: rgba(0,0,0,0.5);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .close-image-modal:hover {
+            color: #ccc;
+        }
+        /* Estilo para la imagen clickeable */
+        .clickable-image {
+            width: 100%;
+            object-fit: contain;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .clickable-image:hover {
+            transform: scale(1.02);
+        }
+    </style>
+</head>
+<body>
+    <!-- Modal Menu -->
+    <header class="modal-menu">
+        <div class="logo">
+            <a href="/"><img src="logo.png" alt="Logo"></a>
+        </div>
+        <nav class="menu-options">
+            <div class="option">
+                <span class="icon"><a href="verify">🔍</a></span>
+                <a href="verify"><span class="label">Verificar</span></a>
+            </div>
+            <div class="option">
+                <span class="icon"><a href="contact">📞</a></span>
+                <a href="contact"><span class="label">Contacto</span></a>
+            </div>
+        </nav>
+    </header>
+    <!-- Contenido Principal -->
+    <main class="content">
+        <div class="info-container">
+            <div class="rifa-container">
+                <div class="rifa-title">
+                    <h2><?php echo htmlspecialchars($raffle['r_title']); ?></h2>
+                </div>
+                <div class="rifa-info">
+                    <p>
+                        <?php if (!empty($raffle['r_description_image'])): ?>
+                          <img src="/admin/uploads/<?php echo htmlspecialchars($raffle['r_description_image']); ?>" 
+                             alt="Imagen del sorteo" 
+                             class="clickable-image" 
+                             onclick="openImageModal('/admin/uploads/<?php echo htmlspecialchars($raffle['r_description_image']); ?>')">
+                        <?php endif; ?>
+                  </p>
+                    <p>
+                      <?php if (!empty($raffle['r_description'])): ?>
+                    </p>
+                        <p><?php echo htmlspecialchars($raffle['r_description']); ?></p>
+                    <?php endif; ?>
+                </div>
+                <div class="rifa-date">
+                    <p><strong>Fecha y Hora:</strong> <?php echo htmlspecialchars($raffle['r_date']); ?></p>
+                </div>
+                <div class="rifa-price">
+                    <h1>Bs. <?php echo $raffle['r_price_bs']; ?></h1>
+                </div>
+                <!-- Barra de progreso -->
+                <div class="progress-container">
+                    <div class="progress-info">
+                        <span><strong>Disponibilidad:</strong>
+                            <?php 
+                            $total = $raffle['final'] - $raffle['begin'] + 1;
+                            $available = $total - $raffle['sold'];
+                            $percentage_available = ($available / $total) * 100;
+                            echo '<strong>'. number_format($percentage_available, 2, '.', '') . '% disponibles</strong>';
+                            ?>
+                      </span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: <?php echo $percentage_available; ?>%"></div>
+                    </div>
+                </div>
+                <!-- Formulario de compra -->
+                <!-- Formulario de compra -->
+<form class="purchase-form" method="POST" id="purchaseForm" enctype="multipart/form-data">
+    <div class="quantity-selector">
+        <p><span class="progress-container"> Seleccione la cantidad de tickets que desea comprar </span></p>
+        <p>&nbsp;</p>
+        <p><strong>
+        <label for="quantity">Cantidad de Tickets:</label>
+        <input type="hidden" id="quantity" name="quantity" value="2">
+        </strong></p>
+        <p>&nbsp;</p>
+        <strong>
+        <div class="quantity-controls">
+            <button type="button" class="quantity-btn decrease-btn" id="decreaseBtn" disabled>-</button>
+            <span class="quantity-value" id="quantityValue" contenteditable="true">2</span>
+            <button type="button" class="quantity-btn increase-btn" id="increaseBtn">+</button>
+            <p>&nbsp;</p>
+        </div>
+        <div class="quick-add-buttons">
+            <button type="button" class="quick-add-btn" onclick="addQuantity(1)">+1</button>
+            <button type="button" class="quick-add-btn" onclick="addQuantity(5)">+5</button>
+            <button type="button" class="quick-add-btn" onclick="addQuantity(10)">+10</button>
+            <button type="button" class="quick-add-btn" onclick="addQuantity(100)">+100</button>
+        </div>
+        <div class="amount-display" id="amountDisplay">
+            <p>Total: Bs. <?php echo number_format($raffle['r_price'] * 2 * $exchange_rate, 2, ',', '.'); ?></p>
+        </div>
+        </strong>
+        <!-- Contenedor de métodos de pago -->
+        <div class="payment-section">
+            <!-- Pago Móvil -->
+            <div class="payment-method">
+                <h3>Pago Móvil</h3>
+                <div class="payment-instructions">
+                    <p><strong>Banco:</strong> <?php echo htmlspecialchars($bank); ?></p>
+                    <p><strong>Cédula:</strong> <?php echo htmlspecialchars($admin_cid); ?></p>
+                    <p><strong>Teléfono:</strong> <?php echo htmlspecialchars($admin_contact_phone); ?></p>
+                    <button type="button" class="copy-data-btn" onclick="copyPaymentData('pm')">Copiar Datos</button>
+                </div>
+            </div>
+            <?php if (!empty($paypal)): ?>
+            <!-- PayPal -->
+            <div class="payment-method">
+                <h3>PayPal</h3>
+                <div class="payment-instructions">
+                    <p><strong>Correo:</strong> <?php echo htmlspecialchars($paypal); ?></p>
+                    <p><strong>Titular:</strong> <?php echo htmlspecialchars($paypal_titleholder); ?></p>
+                    <button type="button" class="copy-data-btn" onclick="copyPaymentData('paypal')">Copiar Datos</button>
+                </div>
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($zelle)): ?>
+            <!-- Zelle -->
+            <div class="payment-method">
+                <h3>Zelle</h3>
+                <div class="payment-instructions">
+                    <p><strong>Correo/Teléfono:</strong> <?php echo htmlspecialchars($zelle); ?></p>
+                    <p><strong>Titular:</strong> <?php echo htmlspecialchars($zelle_titleholder); ?></p>
+                    <button type="button" class="copy-data-btn" onclick="copyPaymentData('zelle')">Copiar Datos</button>
+                </div>
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($zinli)): ?>
+            <!-- Zinli -->
+            <div class="payment-method">
+                <h3>Zinli</h3>
+                <div class="payment-instructions">
+                    <p><strong>Correo/Teléfono:</strong> <?php echo htmlspecialchars($zinli); ?></p>
+                    <p><strong>Titular:</strong> <?php echo htmlspecialchars($zinli_titleholder); ?></p>
+                    <button type="button" class="copy-data-btn" onclick="copyPaymentData('zinli')">Copiar Datos</button>
+                </div>
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($yape)): ?>
+            <!-- Yape -->
+            <div class="payment-method">
+                <h3>Yape</h3>
+                <div class="payment-instructions">
+                    <p><strong>Teléfono:</strong> <?php echo htmlspecialchars($yape); ?></p>
+                    <p><strong>Titular:</strong> <?php echo htmlspecialchars($yape_titleholder); ?></p>
+                    <button type="button" class="copy-data-btn" onclick="copyPaymentData('yape')">Copiar Datos</button>
+                </div>
+            </div>
+            <?php endif; ?>
+            <?php 
+            // Contar cuántos métodos de pago hay disponibles
+            $payment_methods_count = 0;
+            if (!empty($bank)) $payment_methods_count++;
+            if (!empty($paypal)) $payment_methods_count++;
+            if (!empty($zelle)) $payment_methods_count++;
+            if (!empty($zinli)) $payment_methods_count++;
+            if ($payment_methods_count > 1): ?>
+            <button type="button" class="copy-data-btn" style="width:100%;margin-top:10px;" onclick="copyAllPaymentData()">
+               COPIAR TODO LOS DATOS
+            </button>
+            <?php endif; ?>
+        </div>
+    </div>
+    <!-- Campos del formulario -->
+    <div class="form-group">
+      <p class="highlight">&nbsp;</p>
+      <p class="highlight">COMPLETE LOS DATOS DE CONTACTO </p>
+      <p>&nbsp;</p>
+      <p><strong>
+      <label for="id">Cédula:</label>
+        <input type="number" id="id" name="id" placeholder="Solo números" required onblur="buscarCliente(this.value)">
+      </strong>
+    </div>
+    <div class="form-group">
+        <strong>
+        <label for="name">Nombre y Apellido:</label>
+        <input type="text" id="name" name="name" placeholder="Tu nombre y apellido" required>
+        </strong>
+    </div>
+    <div class="form-group">
+        <strong>
+        <label for="country">País:</label>
+        <select id="country" name="country" required>
+            <option value="">Selecciona tu país</option>
+            <option value="+58" selected="selected">VENEZUELA (+58)</option>
+            <option value="+57">COLOMBIA (+57)</option>
+            <option value="+51">PERÚ (+51)</option>
+            <option value="+52">MÉXICO (+52)</option>
+            <option value="+1">ESTADOS UNIDOS (+1)</option>
+            <option value="+34">ESPAÑA (+34)</option>
+            <option value="+56">CHILE (+56)</option>
+            <option value="+502">GUATEMALA (+502)</option>
+            <option value="+503">EL SALVADOR (+503)</option>
+            <option value="+504">HONDURAS (+504)</option>
+            <option value="+505">NICARAGUA (+505)</option>
+            <option value="+506">COSTA RICA (+506)</option>
+            <option value="+507">PANAMÁ (+507)</option>
+            <option value="+591">BOLIVIA (+591)</option>
+            <option value="+593">ECUADOR (+593)</option>
+            <option value="+595">PARAGUAY (+595)</option>
+            <option value="+598">URUGUAY (+598)</option>
+            <option value="+54">ARGENTINA (+54)</option>
+            <option value="+509">HAITÍ (+509)</option>
+            <option value="+61">AUSTRALIA (+61)</option>
+            <option value="+1">CANADÁ (+1)</option>
+            <option value="+592">GUYANA (+592)</option>
+            <option value="+55">BRASIL (+55)</option>
+            <option value="+44">REINO UNIDO (+44)</option>
+        </select>
+        </strong>
+    </div>
+    <div class="form-group">
+        <strong>
+        <label for="phone">Teléfono:</label>
+        <input type="tel" id="phone" name="phone" placeholder="Solo números" required>
+        </strong>
+    </div>
+    <div class="form-group">
+    <br>
+        <strong>
+        <label for="capture" class="file-upload-button">SUBIR CAPTURE PAGO</label>
+        <input id="capture" name="capture" type="file" accept="image/jpeg, image/png" required autocomplete="off">
+        </strong>
+        <div class="file-upload-text" id="file-name-text"></div>
+    </div>
+    <br>
+    <!-- Botones -->
+    <div class="button-container">
+        <div class="button-wrapper left-button">
+            <button type="button" class="back-button" onclick="window.location.href='/';">Atrás</button>
+        </div>
+        <div class="button-wrapper right-button">
+            <button type="button" class="buy-button" onclick="showConfirmation()">Comprar</button>
+        </div>
+    </div>
+</form>
+            </div>
+        </div>
+    </main>
+    <!-- Modal de confirmación -->
+    <div id="confirmationModal" class="confirmation-modal">
+        <div class="confirmation-content">
+            <h3>Confirmar Compra</h3>
+            <p>Por favor verifique que los datos sean correctos:</p>
+            <div id="confirmationDetails"></div>
+            <div class="terms-checkbox">
+                <input type="checkbox" id="termsCheckbox" name="terms" required>
+                <label for="termsCheckbox">He leído y acepto los <span class="terms-link" onclick="showTermsModal()">Términos y Condiciones</span> y estoy consciente de que esta reserva solo me vincula a esta campaña creada por el organizador y NO a la plataforma.</label>
+            </div>
+            <div class="confirmation-buttons">
+                <button class="back-button" onclick="hideConfirmation()">No, corregir</button>
+                <button class="buy-button" onclick="validateTerms()">Sí, confirmar</button>
+            </div>
+        </div>
+    </div>
+    <!-- Modal para número ocupado -->
+    <div id="takenNumberModal" class="taken-number-modal">
+        <div class="taken-number-content">
+            <h3>Número no disponible</h3>
+            <p id="takenNumberMessage"></p>
+            <p>Por favor elija otro.</p>
+            <div class="confirmation-buttons">
+                <button class="buy-button" onclick="hideTakenNumberModal()">Aceptar</button>
+            </div>
+        </div>
+    </div>
+    <!-- Modal para cantidad mínima -->
+    <div id="minQuantityModal" class="min-quantity-modal">
+        <div class="min-quantity-content">
+            <h3>Compra mínima requerida</h3>
+            <p>La cantidad mínima de tickets para comprar es 2.</p>
+            <button class="buy-button" onclick="hideMinQuantityModal()">Aceptar</button>
+        </div>
+    </div>
+    <!-- Modal de Términos y Condiciones -->
+    <div id="termsModal" class="terms-modal">
+        <div class="terms-content">
+            <h3>Términos y Condiciones</h3>
+            <ol>
+                <li>Los números disponibles a comprar de cada una de nuestras rifas serán descritos en la página de detalles de las mismas.</li>
+                <li>Solo pueden participar personas naturales mayores de 18 años con nacionalidad venezolana o extranjeros residentes en Venezuela.</li>
+                <li>Los premios deben ser retirados personalmente en el lugar indicado en cada rifa, entregaremos personalmente solamente en la dirección indicada por el ganador del primer premio o premio mayor.</li>
+                <li>Los ganadores deberán aceptar que GANAVENEZUELA.COM difunda en todas sus redes sociales fotografías y videos con la presencia de los ganadores luego de haber sido entregados los premios.</li>
+            </ol>
+            <button class="buy-button close-terms" onclick="hideTermsModal()">Cerrar</button>
+        </div>
+    </div>
+    <!-- Modal para imagen ampliada -->
+    <div id="imageModal" class="image-modal">
+        <div class="image-modal-content">
+            <span class="close-image-modal" onclick="closeImageModal()">&times;</span>
+            <img id="modalImage" src="" alt="Imagen ampliada">
+        </div>
+    </div>
+    <script>
+        // Variables globales
+        const price = <?php echo $raffle['r_price']; ?>;
+        const exchangeRate = <?php echo $exchange_rate; ?>;
+        let currentQuantity = 2;
+
+        // Función para buscar cliente cuando se sale del campo de cédula
+		function buscarCliente(cid) {
+			if (cid.length < 7) return;
+		
+			fetch('search_customer.php?cid=' + cid)
+				.then(response => response.json())
+				.then(data => {
+					if (data && data.name) {
+						document.getElementById('name').value = data.name;
+						let phone = data.phone || '';
+						
+						// Si hay teléfono y empieza con "04", procesarlo
+						if (phone.startsWith('04')) {
+							phone = phone.substring(1); // Quitar el '0'
+							document.getElementById('country').value = '+58';
+							phone = '+58' + phone;
+						}
+		
+						// Si NO hay teléfono, colocar Venezuela (+58) por defecto
+						if (!phone.trim()) {
+							document.getElementById('country').value = '+58';
+							phone = '+58'; // Mostrar solo el prefijo
+						}
+						
+						document.getElementById('phone').value = phone;
+					}
+				})
+				.catch(error => console.error('Error:', error));
+		}
+
+        // Función para detectar país por IP y seleccionarlo automáticamente
+        function detectCountryByIP() {
+            fetch('https://ipapi.co/json/') 
+                .then(response => response.json())
+                .then(data => {
+                    const countrySelect = document.getElementById('country');
+                    const countryCode = data.country.toLowerCase();
+                    const regionCode = data.region.toLowerCase();
+
+                    // Mapeo de países comunes a códigos de país en el select
+                    const countryMap = {
+                        've': '+58',
+                        'co': '+57',
+                        'pe': '+51',
+                        'mx': '+52',
+                        'us': '+1',
+                        'es': '+34',
+                        'cl': '+56',
+                        'gt': '+502',
+                        'sv': '+503',
+                        'hn': '+504',
+                        'ni': '+505',
+                        'cr': '+506',
+                        'pa': '+507',
+                        'bo': '+591',
+                        'ec': '+593',
+                        'py': '+595',
+                        'uy': '+598',
+                        'ar': '+54',
+                        'ht': '+509',
+                        'au': '+61',
+                        'ca': '+1',
+                        'gy': '+592',
+                        'br': '+55',
+                        'gb': '+44'
+                    };
+
+                    const code = countryMap[countryCode];
+
+                    if (code) {
+                        const option = Array.from(countrySelect.options).find(opt => opt.value === code);
+                        if (option) {
+                            countrySelect.value = code;
+                        } else {
+                            countrySelect.value = '+58'; // Por defecto Venezuela
+                        }
+                    } else {
+                        countrySelect.value = '+58'; // Por defecto Venezuela
+                    }
+                })
+                .catch(() => {
+                    // Si falla la detección, dejar Venezuela por defecto
+                    document.getElementById('country').value = '+58';
+                });
+        }
+
+        // Ejecutar la detección al cargar la página
+        window.addEventListener('DOMContentLoaded', detectCountryByIP);
+
+        // Función para copiar datos de pago específicos
+        function copyPaymentData(method) {
+            let textToCopy = '';
+            switch(method) {
+                case 'pm':
+                    textToCopy = `Pago Móvil
+Banco: ${"<?php echo htmlspecialchars($features['bank']); ?>"}
+Cédula: ${"<?php echo htmlspecialchars($features['cid']); ?>"}
+Teléfono: ${"<?php echo htmlspecialchars($features['admin_phone']); ?>"}`;
+                    break;
+                case 'paypal':
+                    textToCopy = `PayPal
+Correo: ${"<?php echo htmlspecialchars($features['paypal']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['paypal_titleholder']); ?>"}`;
+                    break;
+                case 'zelle':
+                    textToCopy = `Zelle
+Correo/Teléfono: ${"<?php echo htmlspecialchars($features['zelle']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['zelle_titleholder']); ?>"}`;
+                    break;
+                case 'zinli':
+                    textToCopy = `Zinli
+Correo/Teléfono: ${"<?php echo htmlspecialchars($features['zinli']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['zinli_titleholder']); ?>"}`;
+                    break;
+                case 'yape':
+                    textToCopy = `Yape
+Teléfono: ${"<?php echo htmlspecialchars($features['yape']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['yape_titleholder']); ?>"}`;
+                    break;
+            }
+            copyToClipboard(textToCopy);
+        }
+
+        // Función para copiar todos los datos de pago
+        function copyAllPaymentData() {
+            let textToCopy = '';
+            // Pago Móvil
+            if ("<?php echo !empty($features['bank']) ? 'true' : 'false'; ?>" === 'true') {
+                textToCopy += `Pago Móvil
+Banco: ${"<?php echo htmlspecialchars($features['bank']); ?>"}
+Cédula: ${"<?php echo htmlspecialchars($features['cid']); ?>"}
+Teléfono: ${"<?php echo htmlspecialchars($features['admin_phone']); ?>"}`;
+            }
+            // PayPal
+            if ("<?php echo !empty($features['paypal']) ? 'true' : 'false'; ?>" === 'true') {
+                textToCopy += `
+PayPal
+Correo: ${"<?php echo htmlspecialchars($features['paypal']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['paypal_titleholder']); ?>"}`;
+            }
+            // Zelle
+            if ("<?php echo !empty($features['zelle']) ? 'true' : 'false'; ?>" === 'true') {
+                textToCopy += `
+Zelle
+Correo/Teléfono: ${"<?php echo htmlspecialchars($features['zelle']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['zelle_titleholder']); ?>"}`;
+            }
+            // Zinli
+            if ("<?php echo !empty($features['zinli']) ? 'true' : 'false'; ?>" === 'true') {
+                textToCopy += `
+Zinli
+Correo/Teléfono: ${"<?php echo htmlspecialchars($features['zinli']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['zinli_titleholder']); ?>"}`;
+            }
+            // Yape
+            if ("<?php echo !empty($features['yape']) ? 'true' : 'false'; ?>" === 'true') {
+                textToCopy += `
+Yape
+Teléfono: ${"<?php echo htmlspecialchars($features['yape']); ?>"}
+Titular: ${"<?php echo htmlspecialchars($features['yape_titleholder']); ?>"}`;
+            }
+            // Eliminar los últimos dos saltos de línea si existen
+            textToCopy = textToCopy.trim();
+            copyToClipboard(textToCopy);
+        }
+
+        // Función genérica para copiar al portapapeles
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Datos copiados al portapeles:\n\n' + text);
+            }).catch(err => {
+                console.error('Error al copiar: ', err);
+                // Fallback para navegadores que no soportan clipboard API
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Datos copiados al portapeles:\n\n' + text);
+            });
+        }
+
+        // Función para abrir modal de imagen
+        function openImageModal(imageSrc) {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modal.style.display = 'flex';
+            modalImg.src = imageSrc;
+        }
+
+        // Función para cerrar modal de imagen
+        function closeImageModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        // Cerrar modal al hacer clic fuera de la imagen
+        window.addEventListener('click', function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target === modal) {
+                closeImageModal();
+            }
+        });
+
+        // Función para actualizar la cantidad
+		function updateQuantity(newQuantity) {
+			// Obtener el valor del sorteo desde PHP
+			const rafflePrice = <?php echo $raffle['r_price']; ?>;
+			
+			let maxTickets = 100;
+		
+			// Si el precio del sorteo es 0, limitar a máximo 4 tickets
+			if (rafflePrice == 0) {
+				maxTickets = 4;
+				document.querySelector('.quick-add-buttons').style.display = 'none'; // Ocultar botones de +1, +5, etc.
+			} else {
+				document.querySelector('.quick-add-buttons').style.display = 'flex'; // Mostrar botones normales
+			}
+		
+			// Validar límites
+			if (newQuantity < 2) {
+				showMinQuantityModal();
+				newQuantity = 2;
+			} else if (newQuantity > maxTickets) {
+				newQuantity = maxTickets;
+			}
+		
+			currentQuantity = newQuantity;
+			document.getElementById('quantity').value = currentQuantity;
+			document.getElementById('quantityValue').textContent = currentQuantity;
+		
+			// Actualizar estado de los botones
+			document.getElementById('decreaseBtn').disabled = (currentQuantity <= 2);
+			document.getElementById('increaseBtn').disabled = (currentQuantity >= maxTickets);
+		
+			// Calcular y mostrar el monto total
+			const totalUSD = (price * currentQuantity).toFixed(2);
+			const totalBS = (price * currentQuantity * exchangeRate).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+			document.getElementById('amountDisplay').innerHTML = `Total: $${totalUSD} (Bs. ${totalBS})`;
+		}
+		
+		// Inicializar al cargar
+		document.addEventListener("DOMContentLoaded", function () {
+			const rafflePrice = <?php echo $raffle['r_price']; ?>;
+			const maxTickets = rafflePrice == 0 ? 4 : 100;
+		
+			// Ocultar botones rápidos si es sorteo gratis
+			if (rafflePrice == 0) {
+				document.querySelector('.quick-add-buttons').style.display = 'none';
+			}
+		
+			// Asegurarse de que no se pueda pasar del límite inicial
+			const initialQuantity = Math.min(currentQuantity, maxTickets);
+			updateQuantity(initialQuantity);
+		});
+
+        // Función para añadir cantidad
+        function addQuantity(amount) {
+            const newQuantity = Math.min(currentQuantity + amount, 100);
+            updateQuantity(newQuantity);
+        }
+
+        // Función para disminuir cantidad
+        function decreaseQuantity() {
+            if (currentQuantity > 2) {
+                updateQuantity(currentQuantity - 1);
+            }
+        }
+
+        // Función para aumentar cantidad
+        function increaseQuantity() {
+            if (currentQuantity < 100) {
+                updateQuantity(currentQuantity + 1);
+            }
+        }
+
+        // Función para mostrar modal de cantidad mínima
+        function showMinQuantityModal() {
+            document.getElementById('minQuantityModal').style.display = 'flex';
+        }
+
+        // Función para ocultar modal de cantidad mínima
+        function hideMinQuantityModal() {
+            document.getElementById('minQuantityModal').style.display = 'none';
+        }
+
+        // Función para validar términos y condiciones antes de enviar
+        function validateTerms() {
+            const termsCheckbox = document.getElementById('termsCheckbox');
+            const confirmButtons = document.querySelectorAll('.buy-button'); // Selecciona todos los botones de compra
+            if (termsCheckbox.checked) {
+                // Deshabilitar TODOS los botones de compra para prevenir múltiples clics
+                confirmButtons.forEach(button => {
+                    button.disabled = true;
+                    button.textContent = 'Procesando...';
+                    button.style.opacity = '0.7'; // Hacerlo visualmente "deshabilitado"
+                });
+                // Crear un input hidden para enviar el valor del checkbox
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'terms';
+                hiddenInput.value = 'on';
+                document.getElementById('purchaseForm').appendChild(hiddenInput);
+                submitForm();
+            } else {
+                alert('Debe aceptar los términos y condiciones para continuar.');
+            }
+        }
+
+        // Event listeners para los botones
+        document.getElementById('decreaseBtn').addEventListener('click', decreaseQuantity);
+        document.getElementById('increaseBtn').addEventListener('click', increaseQuantity);
+
+        // Event listener para edición directa del valor
+        document.getElementById('quantityValue').addEventListener('input', function(e) {
+            const newValue = parseInt(e.target.textContent) || 2;
+            if (newValue < 2) {
+                showMinQuantityModal();
+                e.target.textContent = 2;
+                updateQuantity(2);
+            } else if (newValue > 100) {
+                e.target.textContent = 100;
+                updateQuantity(100);
+            } else {
+                updateQuantity(newValue);
+            }
+        });
+
+        // Event listener para perder foco del campo editable
+        document.getElementById('quantityValue').addEventListener('blur', function(e) {
+            const newValue = parseInt(e.target.textContent) || 2;
+            if (newValue < 2) {
+                showMinQuantityModal();
+                e.target.textContent = 2;
+                updateQuantity(2);
+            } else {
+                updateQuantity(newValue);
+            }
+        });
+
+        // Mostrar nombre del archivo subido
+        document.getElementById('capture').addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name || 'No se seleccionó archivo';
+            document.getElementById('file-name-text').textContent = fileName;
+        });
+
+        // Función para mostrar el modal de confirmación
+        async function showConfirmation() {
+            // Validar que todos los campos estén completos
+            const form = document.getElementById('purchaseForm');
+            const inputs = form.querySelectorAll('input[required], select[required]');
+            let isValid = true;
+            inputs.forEach(input => {
+                if (!input.value) {
+                    isValid = false;
+                    input.style.borderColor = 'red';
+                } else {
+                    input.style.borderColor = '#000f59';
+                }
+            });
+
+            // Validar archivo subido
+            const fileInput = document.getElementById('capture');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                isValid = false;
+                fileInput.style.borderColor = 'red';
+                document.getElementById('file-name-text').style.color = 'red';
+            } else {
+                fileInput.style.borderColor = '#000f59';
+                document.getElementById('file-name-text').style.color = '#666';
+            }
+
+            if (!isValid) {
+                alert('Por favor complete todos los campos requeridos y suba un comprobante de pago.');
+                return;
+            }
+
+            // Calcular el monto total
+            const quantity = parseInt(document.getElementById('quantity').value);
+            const total = quantity * price;
+            const totalBs = (total * exchangeRate).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+            // Mostrar los datos en el modal
+            const details = document.getElementById('confirmationDetails');
+            details.innerHTML = `
+                <p><strong>Cantidad de Tickets:</strong> ${quantity}</p>
+                <p><strong>Monto Total:</strong> Bs. ${totalBs}</p>
+                <p><strong>Nombre:</strong> ${document.getElementById('name').value.toUpperCase()}</p>
+                <p><strong>Cédula:</strong> ${document.getElementById('id').value.toUpperCase()}</p>
+                <p><strong>País:</strong> ${document.getElementById('country').options[document.getElementById('country').selectedIndex].text.toUpperCase()}</p>
+                <p><strong>Teléfono:</strong> ${document.getElementById('phone').value}</p>
+                <p><strong>Comprobante:</strong> ${document.getElementById('capture').files[0].name}</p>
+                <p><strong>Se generarán ${quantity} números aleatorios únicos entre ${<?php echo $raffle['begin']; ?>} y ${<?php echo $raffle['final']; ?>}</p>
+            `;
+
+            // Mostrar el modal
+            document.getElementById('confirmationModal').style.display = 'flex';
+        }
+
+
+        // Función para ocultar el modal de confirmación
+        function hideConfirmation() {
+            document.getElementById('confirmationModal').style.display = 'none';
+        }
+
+        // Función para ocultar el modal de número ocupado
+        function hideTakenNumberModal() {
+            document.getElementById('takenNumberModal').style.display = 'none';
+        }
+
+        // Función para enviar el formulario
+        function submitForm() {
+            document.getElementById('purchaseForm').submit();
+        }
+
+        // Configurar la barra de progreso con colores dinámicos
+        document.addEventListener('DOMContentLoaded', function() {
+            const progressFill = document.querySelector('.progress-fill');
+            if (progressFill) {
+                const width = parseFloat(progressFill.style.width);
+                let color;
+                if (width >= 50) {
+                    const ratio = (width - 50) / 50;
+                    color = interpolateColor('#118611', '#8bc34a', ratio);
+                } else if (width >= 15) {
+                    const ratio = (width - 15) / 35;
+                    color = interpolateColor('#8bc34a', '#ff6f00', ratio);
+                } else {
+                    const ratio = width / 15;
+                    color = interpolateColor('#ff6f00', '#cd1313', ratio);
+                }
+                progressFill.style.backgroundColor = color;
+            }
+
+            // Función para interpolar entre dos colores
+            function interpolateColor(color1, color2, factor) {
+                if (factor <= 0) return color1;
+                if (factor >= 1) return color2;
+                const hex = color => {
+                    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+                    return result ? [
+                        parseInt(result[1], 16),
+                        parseInt(result[2], 16),
+                        parseInt(result[3], 16)
+                    ] : [0, 0, 0];
+                };
+                const rgb1 = hex(color1);
+                const rgb2 = hex(color2);
+                const r = Math.round(rgb1[0] + factor * (rgb2[0] - rgb1[0]));
+                const g = Math.round(rgb1[1] + factor * (rgb2[1] - rgb1[1]));
+                const b = Math.round(rgb1[2] + factor * (rgb2[2] - rgb1[2]));
+                return `rgb(${r}, ${g}, ${b})`;
+            }
+        });
+    </script>
+    <script>
+document.addEventListener("DOMContentLoaded", function () {
+    const countrySelect = document.getElementById("country");
+    const phoneInput = document.getElementById("phone");
+    let currentPrefix = "";
+    function escapeRegExp(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    function setPhonePrefix(prefix) {
+        currentPrefix = prefix;
+        phoneInput.value = prefix;
+        setCaretToEnd();
+    }
+    function setCaretToEnd() {
+        setTimeout(() => {
+            phoneInput.setSelectionRange(phoneInput.value.length, phoneInput.value.length);
+        }, 0);
+    }
+    // Prevenir borrar/modificar el prefijo
+    phoneInput.addEventListener("keydown", function (e) {
+        const prefixLength = currentPrefix.length;
+        // No permitir eliminar el prefijo
+        if (
+            phoneInput.selectionStart < prefixLength ||
+            (phoneInput.selectionStart === prefixLength && e.key === "Backspace")
+        ) {
+            e.preventDefault();
+        }
+    });
+    phoneInput.addEventListener("input", function () {
+        // Restaurar prefijo si lo borran de alguna manera (ej. pegado masivo)
+        if (!phoneInput.value.startsWith(currentPrefix)) {
+            phoneInput.value = currentPrefix;
+            setCaretToEnd();
+            return;
+        }
+        let rest = phoneInput.value.slice(currentPrefix.length);
+        // No permitir que el usuario escriba el código de país nuevamente
+        const cleanPrefix = escapeRegExp(currentPrefix.replace("+", ""));
+        const regexDup = new RegExp(`^\\+?${cleanPrefix}`, "g");
+        rest = rest.replace(regexDup, "");
+        // Eliminar ceros iniciales
+        rest = rest.replace(/^0+/, '');
+        phoneInput.value = currentPrefix + rest;
+        setCaretToEnd();
+    });
+    // Cuando cambia el país
+    countrySelect.addEventListener("change", function () {
+        if (countrySelect.value) {
+            setPhonePrefix(countrySelect.value);
+        }
+    });
+    // Inicializar con el valor actual
+    if (countrySelect.value) {
+        setPhonePrefix(countrySelect.value);
+    }
+});
+</script>
+</body>
+</html>
+<?php include 'footer.php'; ?>
+
+/* ----- Archivo php: index.php ----- */
+<?php
+// Configuración de la conexión a la base de datos
+$host = "localhost";
+$dbname = "ganavenezuela.com";
+$username = "root";
+$password = "Cable0414++";
+try {
+    // Crear conexión PDO
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password);
+    // Configurar el modo de errores
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    // Obtener la tasa de cambio
+    $rate_query = "SELECT rate FROM features LIMIT 1";
+    $rate_stmt = $pdo->query($rate_query);
+    $rate = $rate_stmt->fetch(PDO::FETCH_ASSOC);
+    $exchange_rate = $rate['rate'] ?? 1;
+    // Consulta SQL para obtener sorteos activos (ahora incluyendo r_description_image)
+    $query = "SELECT id, r_title, r_description, r_description_image, r_date, r_price, begin, final, sold FROM raffles WHERE status = 'active'";
+    $stmt = $pdo->prepare($query);
+    $stmt->execute();
+    // Obtener los resultados como un array asociativo
+    $raffles = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Calcular precio en bolívares para cada sorteo
+    foreach ($raffles as &$raffle) {
+        $raffle['r_price_bs'] = number_format($raffle['r_price'] * $exchange_rate, 2, ',', '.');
+    }
+    unset($raffle); // Romper la referencia
+} catch (PDOException $e) {
+    // Manejo de errores
+    echo "Error al conectar con la base de datos: " . $e->getMessage();
+    exit;
+}
+?>
+<?php
+// Configuración de la conexión a la base de datos (usando las mismas credenciales)
+$host = "localhost";
+$dbname = "ganavenezuela.com";
+$username = "root";
+$password = "Cable0414++";
+
+try {
+    // Crear conexión PDO
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Función para obtener información geográfica de la IP
+    function getIpInfo($ip) {
+        $url = "http://ip-api.com/json/{$ip}?fields=status,message,country,query,hostname";
+        $response = @file_get_contents($url);
+        
+        if ($response === false) {
+            return null;
+        }
+        
+        $data = json_decode($response, true);
+        
+        if ($data['status'] !== 'success') {
+            return null;
+        }
+        
+        return $data;
+    }
+
+    // Obtener información del visitante
+    $ipaddress = $_SERVER['REMOTE_ADDR'];
+    $host = gethostbyaddr($ipaddress);
+    $ipInfo = getIpInfo($ipaddress);
+    $country = $ipInfo['country'] ?? 'Desconocido';
+    $info = json_encode([
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'referer' => $_SERVER['HTTP_REFERER'] ?? '',
+        'ip_info' => $ipInfo
+    ]);
+
+    // Insertar registro en la base de datos
+    $query = "INSERT INTO visitors 
+              (ipaddress, host, country, info) 
+              VALUES 
+              (:ipaddress, :host, :country, :info)";
+    
+    $stmt = $pdo->prepare($query);
+    $stmt->bindParam(':ipaddress', $ipaddress, PDO::PARAM_STR);
+    $stmt->bindParam(':host', $host, PDO::PARAM_STR);
+    $stmt->bindParam(':country', $country, PDO::PARAM_STR);
+    $stmt->bindParam(':info', $info, PDO::PARAM_STR);
+    $stmt->execute();
+
+} catch (PDOException $e) {
+    // Opcional: puedes registrar el error en un archivo de log
+    error_log("Error al registrar acceso: " . $e->getMessage());
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inicio - Gana Venezuela</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Estilos para el modal de imagen */
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            z-index: 1002;
+            justify-content: center;
+            align-items: center;
+        }
+        .image-modal-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .image-modal-content img {
+            max-width: 100%;
+            max-height: 90vh;
+            display: block;
+            margin: 0 auto;
+        }
+        .close-image-modal {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            color: white;
+            font-size: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: rgba(0,0,0,0.5);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .close-image-modal:hover {
+            color: #ccc;
+        }
+        /* Estilo para la imagen clickeable */
+        .clickable-image {
+            width: 100%;
+            object-fit: contain;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .clickable-image:hover {
+            transform: scale(1.02);
+        }
+    </style>
+</head>
+<body>
+    <!-- Modal Menu -->
+    <header class="modal-menu">
+        <div class="logo">
+            <a href="/"><img src="logo.png" alt="Logo"></a>
+        </div>
+        <nav class="menu-options">
+            <div class="option">
+                <span class="icon"><a href="verify">🔍</a></span>
+                <a href="verify"><span class="label">Verificar</span></a>
+            </div>
+            <div class="option">
+                <span class="icon"><a href="contact">📞</a></span>
+                <a href="contact"><span class="label">Contacto</span></a>
+            </div>
+        </nav>
+    </header>
+    <!-- Contenido Principal -->
+    <main class="content">
+        <!-- Div de Bienvenida e Instrucciones -->
+        <div class="welcome-message">
+            <h2 align="center">Bienvenido a Gana Venezuela</h2>
+            <p align="center">¡Participa en nuestros sorteos y gana increíbles premios!</p>
+            <p align="center"><strong>Instrucciones:</strong> Selecciona el sorteo en el que deseas participar y haz clic en "Comprar Boleto". Ingresa tus datos y completa el proceso de compra. ¡Buena suerte!</p>
+            <p>&nbsp;</p>
+        </div>
+        <div class="info-container">
+            <?php if (!empty($raffles)): ?>
+                <?php foreach ($raffles as $raffle): ?>
+                    <!-- Contenedor de cada rifa -->
+                    <div class="rifa-container">
+                        <div class="rifa-title">
+                            <h2><?php echo htmlspecialchars($raffle['r_title']); ?></h2>
+                        </div>
+                        <div class="rifa-info">
+                        <p>
+                          <?php if (!empty($raffle['r_description_image'])): ?>
+                          <img src="/admin/uploads/<?php echo htmlspecialchars($raffle['r_description_image']); ?>" 
+                             alt="Imagen del sorteo" 
+                             class="clickable-image" 
+                             onclick="openImageModal('/admin/uploads/<?php echo htmlspecialchars($raffle['r_description_image']); ?>')">
+                          <?php endif; ?>
+                        </p>
+                        <p>
+                          <?php if (!empty($raffle['r_description'])): ?>
+                        </p>
+                        <p><?php echo htmlspecialchars($raffle['r_description']); ?></p>
+                    <?php endif; ?>
+                </div>
+                        <div class="rifa-date">
+                            <p><strong>Fecha y Hora:</strong> <?php echo htmlspecialchars($raffle['r_date']); ?></p>
+                        </div>
+                        <div class="rifa-price">
+                            <h1>Bs. <?php echo $raffle['r_price_bs']; ?></h1>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-info">
+                                <span><strong>Disponibilidad:</strong>
+<?php 
+                                    $total = $raffle['final'] - $raffle['begin'] + 1;
+                                    $available = $total - $raffle['sold'];
+                                    $percentage_available = ($available / $total) * 100;
+                                    echo '<strong>'. number_format($percentage_available, 2, '.', '') . '% disponibles</strong>';
+                                ?></span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: <?php echo $percentage_available; ?>%"></div>
+                            </div>
+                        </div>
+                        <div class="rifa-button">
+                            <a href="buy?raffle=<?php echo htmlspecialchars($raffle['id']); ?>">
+                                <button class="buy-button">Comprar Boleto</button>
+                            </a>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <!-- Mensaje destacado si no hay sorteos activos -->
+                <div class="no-raffles-message">
+                    <p><strong>No hay sorteos activos disponibles en este momento.</strong></p>
+                    <p>Vuelve pronto para participar en nuestros próximos sorteos.</p>
+                </div>
+            <?php endif; ?>
+        </div>
+    </main>
+    <!-- Modal para imagen ampliada -->
+    <div id="imageModal" class="image-modal">
+        <div class="image-modal-content">
+            <span class="close-image-modal" onclick="closeImageModal()">&times;</span>
+            <img id="modalImage" src="" alt="Imagen ampliada">
+        </div>
+    </div>
+    <script>
+    // Función para abrir modal de imagen
+    function openImageModal(imageSrc) {
+        const modal = document.getElementById('imageModal');
+        const modalImg = document.getElementById('modalImage');
+        modal.style.display = 'flex';
+        modalImg.src = imageSrc;
+    }
+
+    // Función para cerrar modal de imagen
+    function closeImageModal() {
+        document.getElementById('imageModal').style.display = 'none';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const progressFills = document.querySelectorAll('.progress-fill');
+        progressFills.forEach(fill => {
+            const width = parseFloat(fill.style.width);
+            let color;
+            if (width >= 50) {
+                const ratio = (width - 50) / 50;
+                color = interpolateColor('#118611', '#8bc34a', ratio);
+            } else if (width >= 15) {
+                const ratio = (width - 15) / 35;
+                color = interpolateColor('#8bc34a', '#ff6f00', ratio);
+            } else {
+                const ratio = width / 15;
+                color = interpolateColor('#ff6f00', '#cd1313', ratio);
+            }
+            fill.style.backgroundColor = color;
+        });
+
+        // Cerrar modal al hacer clic fuera de la imagen
+        window.addEventListener('click', function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target === modal) {
+                closeImageModal();
+            }
+        });
+
+        // Función para interpolar entre dos colores
+        function interpolateColor(color1, color2, factor) {
+            if (factor <= 0) return color1;
+            if (factor >= 1) return color2;
+            const hex = color => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+                return result ? [
+                    parseInt(result[1], 16),
+                    parseInt(result[2], 16),
+                    parseInt(result[3], 16)
+                ] : [0, 0, 0];
+            };
+            const rgb1 = hex(color1);
+            const rgb2 = hex(color2);
+            const r = Math.round(rgb1[0] + factor * (rgb2[0] - rgb1[0]));
+            const g = Math.round(rgb1[1] + factor * (rgb2[1] - rgb1[1]));
+            const b = Math.round(rgb1[2] + factor * (rgb2[2] - rgb1[2]));
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+    });
+    </script>
+</body>
+</html>
+<?php include 'footer.php'; ?>
+
+/* ----- Archivo css: styles.css ----- */
+@charset "utf-8";
+/* CSS Document */
+
+/* Cargar la fuente personalizada */
+@font-face {
+    font-family: 'Forgotten';
+    src: url('fonts/forgotten.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* Reset básico */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #000f59;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+    margin: 0;
+}
+
+/* Estilo del Modal Menu */
+.modal-menu {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 20px;
+    background-color: #000f59;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    border-radius: 0;
+}
+
+.logo img {
+    width: 100px;
+    height: 55px;
+}
+
+.menu-options {
+    display: flex;
+    gap: 20px;
+}
+
+.option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    color: white;
+}
+
+.option .icon {
+    font-size: 24px;
+    filter: brightness(0) invert(1);
+}
+
+.option .label {
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.menu-options a {
+    text-decoration: none;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.menu-options a:hover {
+    color: #ffcc00;
+}
+
+/* Contenido Principal */
+.content {
+    width: 90%;
+    max-width: 1200px;
+    margin: 100px auto 20px;
+}
+
+.welcome-message {
+    margin-top: 10px;
+    text-align: center;
+}
+
+.info-container {
+    background-color: #f0f0f0;
+    color: black;
+    padding: 20px;
+    border-radius: 5px;
+    text-align: center;
+}
+
+/* Contenedor de cada rifa */
+.rifa-container {
+    width: 99%;
+    margin: 0 auto 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background-color: #CCC;
+    padding: 20px;
+    border-radius: 5px;
+}
+
+.rifa-title h2 {
+    font-size: 1.8rem;
+    margin-bottom: 10px;
+    color: #000f59;
+}
+
+.rifa-info p {
+    font-size: 1rem;
+    margin-bottom: 10px;
+}
+
+.rifa-date p {
+    font-size: 1rem;
+    margin-bottom: 10px;
+}
+
+.rifa-price h1 {
+    font-size: 2.5rem;
+    color: #000f59;
+    margin: 10px 0;
+}
+
+/* Barra de progreso */
+.progress-container {
+    width: 100%;
+    margin: 10px 0;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+    color: #333;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 30px;
+    background: repeating-linear-gradient(
+        45deg,
+        #f0f0f0,
+        #f0f0f0 10px,
+        #e0e0e0 10px,
+        #e0e0e0 20px
+    );
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    position: relative;
+    background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 10px,
+        rgba(255, 255, 255, 0.2) 10px,
+        rgba(255, 255, 255, 0.2) 20px
+    );
+}
+
+/* Colores dinámicos (se aplican mediante JavaScript) */
+.progress-fill::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        to right,
+        #118611,
+        #8bc34a,
+        #ffc107,
+        #ff6f00,
+        #cd1313
+    );
+    background-size: 100% 100%;
+    z-index: -1;
+}
+
+.rifa-button {
+    margin-top: 10px;
+}
+
+.buy-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #ff6f00;
+    color: #000f59;
+
+}
+
+.buy-button:hover {
+    background-color: #e65c00;
+}
+
+
+
+/* Mensaje cuando no hay rifas */
+.no-raffles-message {
+    padding: 30px;
+    background-color: #fff;
+    border-radius: 5px;
+    color: #000f59;
+    font-size: 1.2rem;
+    margin: 20px 0;
+}
+
+.no-raffles-message p {
+    margin-bottom: 10px;
+}
+
+/* Selector de números */
+.number-selector {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.number-selector select {
+    width: 60px;
+    height: 60px;
+    font-size: 100px;
+    text-align: center;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: white;
+    cursor: pointer;
+}
+
+.number-selector select:focus {
+    outline: none;
+    border-color: #ff6f00;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Campos de formulario */
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #ff6f00;
+    outline: none;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Modal de confirmación */
+.confirmation-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.35);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.confirmation-content {
+    background-color: #f0f0f0;
+    width: 90%;
+    max-width: 500px;
+    padding: 20px;
+    border-radius: 10px;
+    color: #000;
+    text-align: center;
+}
+
+.confirmation-content h3 {
+    color: #000f59;
+    margin-bottom: 15px;
+}
+
+.confirmation-content p {
+    margin: 8px 0;
+    text-align: left;
+}
+
+.confirmation-content p strong {
+    color: #000f59;
+}
+
+.confirmation-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+
+    
+    .confirmation-buttons {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .confirmation-buttons button {
+        width: 100%;
+    }
+}
+
+
+/* Campos de formulario */
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #000f59;
+    border-radius: 5px;
+    font-family: 'Forgotten', Arial, sans-serif;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #ff6f00;
+    outline: none;
+    box-shadow: 0 0 5px rgba(255, 111, 0, 0.5);
+}
+
+/* Botones */
+.button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+.button-wrapper {
+    flex: 1;
+    margin: 0 5px;
+}
+
+.button-wrapper.left-button {
+    text-align: left;
+
+}
+
+.button-wrapper.right-button {
+    text-align: right;
+
+}
+
+.back-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #000f59;
+    color: white;
+}
+
+.back-button:hover {
+    background-color: #000c4a;
+}
+
+.buy-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: 'Forgotten', Arial, sans-serif;
+    background-color: #ff6f00;
+    color: #000f59;
+}
+
+.buy-button:hover {
+    background-color: #e65c00;
+}
+
+/* Modal de confirmación */
+
+
+
+
+/* Modal para número ocupado */
+.taken-number-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.35);
+    z-index: 2000;
+    justify-content: center;
+    align-items: center;
+}
+
+.taken-number-content {
+    background-color: #f0f0f0;
+    width: 90%;
+    max-width: 400px;
+    padding: 20px;
+    border-radius: 10px;
+    color: #000;
+    text-align: center;
+}
+
+.taken-number-content h3 {
+    color: #cd1313;
+    margin-bottom: 15px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+
+    
+    .confirmation-buttons,
+    .button-container {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .confirmation-buttons button,
+    .button-wrapper button {
+        width: 100%;
+    }
+    
+    .button-wrapper.left-button,
+    .button-wrapper.right-button {
+        text-align: center;
+    }
+}
+
+/* ERROR: No se encontraron credenciales de la base de datos en el archivo functions.php. */
